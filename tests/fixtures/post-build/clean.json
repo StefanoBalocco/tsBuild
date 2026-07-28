@@ -1,0 +1,14 @@
+[
+	{
+		"target": "lib",
+		"tsConfig": "tsconfig.json",
+		"prefix": "project",
+		"copy": [
+			{
+				"destination": "out/assets",
+				"files": [ "assets/one.txt", "assets/two.txt" ],
+				"clean": true
+			}
+		]
+	}
+]

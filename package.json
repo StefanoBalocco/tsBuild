@@ -1,0 +1,54 @@
+{
+	"name": "@stefanobalocco/tsbuild",
+	"version": "1.0.0",
+	"description": "Build TypeScript targets and minify their JavaScript output.",
+	"type": "module",
+	"engines": {
+		"node": "^22.20.0 || ^24.12.0 || >=26.0.0"
+	},
+	"main": "dist/tsBuild.js",
+	"types": "dist/tsBuild.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/tsBuild.d.ts",
+			"import": "./dist/tsBuild.js"
+		}
+	},
+	"bin": {
+		"tsBuild": "./dist/tsBuild.js"
+	},
+	"files": [
+		"dist/tsBuild.d.ts",
+		"dist/tsBuild.js"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/StefanoBalocco/tsBuild.git"
+	},
+	"author": "Stefano Balocco <stefano.balocco@gmail.com>",
+	"license": "BSD-3-Clause",
+	"bugs": {
+		"url": "https://github.com/StefanoBalocco/tsBuild/issues"
+	},
+	"homepage": "https://github.com/StefanoBalocco/tsBuild",
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"build:tests": "tsc -p tests/tsconfig.json",
+		"tests": "c8 --include=src/tsBuild.ts --exclude-after-remap --per-file --reporter=text --reporter=lcov ava 'tests/dist/*.test.js' --verbose --timeout=120s"
+	},
+	"dependencies": {
+		"@stefanobalocco/jtdal": "~5",
+		"@stefanobalocco/tersercompanion": "~1",
+		"@stefanobalocco/zeptologger": "~2",
+		"terser": "~5",
+		"typescript": "~6"
+	},
+	"devDependencies": {
+		"@types/node": "^24",
+		"ava": "~8",
+		"c8": "~12"
+	}
+}

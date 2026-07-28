@@ -1,0 +1,10 @@
+[
+	{
+		"target": "beta",
+		"tsConfig": "tsconfig.beta.json"
+	},
+	{
+		"target": "alpha",
+		"tsConfig": "tsconfig.alpha.json"
+	}
+]

@@ -1,0 +1,9 @@
+[
+	{
+		"target": "lib",
+		"tsConfig": "tsconfig.json",
+		"minify": {
+			"files": [ "dist/index.js" ]
+		}
+	}
+]
