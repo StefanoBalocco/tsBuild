@@ -1,6 +1,6 @@
 {
 	"name": "@stefanobalocco/tsbuild",
-	"version": "1.0.2",
+	"version": "1.0.3",
 	"description": "Build TypeScript targets and minify their JavaScript output.",
 	"type": "module",
 	"engines": {
@@ -41,7 +41,7 @@
 		"tests": "c8 --include=src/tsBuild.ts --exclude-after-remap --per-file --reporter=text --reporter=lcov ava 'tests/dist/*.test.js' --verbose --timeout=120s"
 	},
 	"dependencies": {
-		"@stefanobalocco/jtdal": "^5",
+		"@stefanobalocco/jtdal": "^6",
 		"@stefanobalocco/tersercompanion": "^1",
 		"@stefanobalocco/zeptologger": "^2",
 		"terser": "^5",
