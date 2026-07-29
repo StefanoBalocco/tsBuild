@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { minify } from 'terser';
 import terserCompanion from '@stefanobalocco/tersercompanion';
 import TsBuild from '../../dist/tsBuild.js';
+import type { TsBuildItem } from '../../dist/tsBuild.js';
 
 const __dirname: string = path.dirname( fileURLToPath( import.meta.url ) );
 const fixturesRoot: string = path.resolve( __dirname, '../fixtures' );
@@ -28,12 +29,14 @@ async function createWorkspace( fixtureName: string ): Promise<string> {
 }
 
 async function exists( filePath: string ): Promise<boolean> {
+	let returnValue: boolean;
 	try {
 		await stat( filePath );
-		return true;
+		returnValue = true;
 	} catch {
-		return false;
+		returnValue = false;
 	}
+	return returnValue;
 }
 
 async function fileSize( filePath: string ): Promise<number> {
@@ -41,66 +44,69 @@ async function fileSize( filePath: string ): Promise<number> {
 	return stats.size;
 }
 
+async function buildItem( workspace: string, configFile: string, targetName: string ): Promise<void> {
+	const configPath: string = path.join( workspace, configFile );
+	const content: string = await readFile( configPath, 'utf8' );
+	const buildItems: TsBuildItem[] = JSON.parse( content ) as TsBuildItem[];
+	const builder: TsBuild = new TsBuild( path.dirname( configPath ) );
+	const item: TsBuildItem | undefined = buildItems.find( ( entry: TsBuildItem ): boolean => entry.target === targetName );
+	if( !item ) {
+		throw new Error( `Target "${ targetName }" not found in ${ configFile }` );
+	}
+	await builder.build( item );
+}
+
 test.after.always( async (): Promise<void> => {
 	await rm( worksRoot, { recursive: true, force: true } );
 } );
 
-test.serial( 'fromConfigFile builds one configured target', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'build one configured target', async ( t: ExecutionContext ): Promise<void> => {
 	const workspace: string = await createWorkspace( 'minimal' );
-	const builder: TsBuild = await TsBuild.fromConfigFile( path.join( workspace, 'tsBuild.json' ) );
-	const result: boolean = await builder.build( new Set<string>( [ 'lib' ] ) );
+	await buildItem( workspace, 'tsBuild.json', 'lib' );
 
-	t.true( result );
 	t.true( await exists( path.join( workspace, 'dist/index.js' ) ) );
 	t.false( await exists( path.join( workspace, 'dist/index.min.js' ) ) );
 } );
 
-test.serial( 'build runs all configured targets in declaration order', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'runCli builds all configured targets in declaration order', async ( t: ExecutionContext ): Promise<void> => {
 	const workspace: string = await createWorkspace( 'multi' );
-	const builder: TsBuild = await TsBuild.fromConfigFile( path.join( workspace, 'tsBuild.json' ) );
-	const result: boolean = await builder.build( new Set<string>( [ 'all' ] ) );
+	const exitCode: number = await TsBuild.runCli( [ '-f', path.join( workspace, 'tsBuild.json' ), 'all' ] );
 
-	t.true( result );
+	t.is( exitCode, 0 );
 	t.true( await exists( path.join( workspace, 'dist/beta.js' ) ) );
 	t.true( await exists( path.join( workspace, 'dist/alpha.js' ) ) );
 } );
 
-test.serial( 'build runs multiple explicitly named targets', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'runCli builds multiple explicitly named targets', async ( t: ExecutionContext ): Promise<void> => {
 	const workspace: string = await createWorkspace( 'multi' );
-	const builder: TsBuild = await TsBuild.fromConfigFile( path.join( workspace, 'tsBuild.json' ) );
-	const result: boolean = await builder.build( new Set<string>( [ 'alpha', 'beta' ] ) );
+	const exitCode: number = await TsBuild.runCli( [ '-f', path.join( workspace, 'tsBuild.json' ), 'alpha', 'beta' ] );
 
-	t.true( result );
+	t.is( exitCode, 0 );
 	t.true( await exists( path.join( workspace, 'dist/alpha.js' ) ) );
 	t.true( await exists( path.join( workspace, 'dist/beta.js' ) ) );
 } );
 
-test.serial( 'build runs a selected subset', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'runCli builds a selected subset', async ( t: ExecutionContext ): Promise<void> => {
 	const workspace: string = await createWorkspace( 'multi' );
-	const builder: TsBuild = await TsBuild.fromConfigFile( path.join( workspace, 'tsBuild.json' ) );
-	const result: boolean = await builder.build( new Set<string>( [ 'alpha' ] ) );
+	const exitCode: number = await TsBuild.runCli( [ '-f', path.join( workspace, 'tsBuild.json' ), 'alpha' ] );
 
-	t.true( result );
+	t.is( exitCode, 0 );
 	t.true( await exists( path.join( workspace, 'dist/alpha.js' ) ) );
 	t.false( await exists( path.join( workspace, 'dist/beta.js' ) ) );
 } );
 
 test.serial( 'build resolves prefix from the configuration file directory', async ( t: ExecutionContext ): Promise<void> => {
 	const workspace: string = await createWorkspace( 'prefixed' );
-	const builder: TsBuild = await TsBuild.fromConfigFile( path.join( workspace, 'tsBuild.json' ) );
-	const result: boolean = await builder.build( new Set<string>( [ 'lib' ] ) );
+	await buildItem( workspace, 'tsBuild.json', 'lib' );
 
-	t.true( result );
 	t.true( await exists( path.join( workspace, 'packages/lib/dist/index.js' ) ) );
 } );
 
 test.serial( 'minify configuration supports all requested modes', async ( t: ExecutionContext ): Promise<void> => {
 	// Terser-only
 	const terserWorkspace: string = await createWorkspace( 'minify' );
-	const terserBuilder: TsBuild = await TsBuild.fromConfigFile( path.join( terserWorkspace, 'terser.json' ) );
-	const terserResult: boolean = await terserBuilder.build( new Set<string>( [ 'lib' ] ) );
+	await buildItem( terserWorkspace, 'terser.json', 'lib' );
 
-	t.true( terserResult );
 	const terserMinPath: string = path.join( terserWorkspace, 'dist/index.min.js' );
 	t.true( await exists( terserMinPath ) );
 	const terserSourceSize: number = await fileSize( path.join( terserWorkspace, 'dist/index.js' ) );
@@ -109,26 +115,20 @@ test.serial( 'minify configuration supports all requested modes', async ( t: Exe
 
 	// Companion-only
 	const companionWorkspace: string = await createWorkspace( 'minify' );
-	const companionBuilder: TsBuild = await TsBuild.fromConfigFile( path.join( companionWorkspace, 'companion.json' ) );
-	const companionResult: boolean = await companionBuilder.build( new Set<string>( [ 'lib' ] ) );
+	await buildItem( companionWorkspace, 'companion.json', 'lib' );
 
-	t.true( companionResult );
 	t.true( await exists( path.join( companionWorkspace, 'dist/index.min.js' ) ) );
 
 	// Default (both)
 	const defaultWorkspace: string = await createWorkspace( 'minify' );
-	const defaultBuilder: TsBuild = await TsBuild.fromConfigFile( path.join( defaultWorkspace, 'tsBuild.json' ) );
-	const defaultResult: boolean = await defaultBuilder.build( new Set<string>( [ 'lib' ] ) );
+	await buildItem( defaultWorkspace, 'tsBuild.json', 'lib' );
 
-	t.true( defaultResult );
 	t.true( await exists( path.join( defaultWorkspace, 'dist/index.min.js' ) ) );
 
 	// Disabled
 	const disabledWorkspace: string = await createWorkspace( 'minify' );
-	const disabledBuilder: TsBuild = await TsBuild.fromConfigFile( path.join( disabledWorkspace, 'disabled.json' ) );
-	const disabledResult: boolean = await disabledBuilder.build( new Set<string>( [ 'lib' ] ) );
+	await buildItem( disabledWorkspace, 'disabled.json', 'lib' );
 
-	t.true( disabledResult );
 	t.false( await exists( path.join( disabledWorkspace, 'dist/index.min.js' ) ) );
 } );
 
@@ -188,7 +188,7 @@ test.serial( 'installed-package bin executes the build with copy and templates',
 	t.true( html.includes( 'tsBuild template' ), 'template variable rendered via published bin' );
 } );
 
-test.serial( 'minifyFile on .mjs writes sibling .min.mjs and leaves original unchanged', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'minify on .mjs writes sibling .min.mjs and leaves original unchanged', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minify' );
 	const sourcePath: string = path.join( ws, 'dist/lib.mjs' );
 	const minPath: string = path.join( ws, 'dist/lib.min.mjs' );
@@ -196,7 +196,7 @@ test.serial( 'minifyFile on .mjs writes sibling .min.mjs and leaves original unc
 	await mkdir( path.dirname( sourcePath ), { recursive: true } );
 	await writeFile( sourcePath, 'export const version = "1.0.0";\n' );
 
-	const result: boolean = await TsBuild.minifyFile( sourcePath, true, false );
+	const result: boolean = await TsBuild.minify( sourcePath, true, false );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -205,7 +205,7 @@ test.serial( 'minifyFile on .mjs writes sibling .min.mjs and leaves original unc
 	t.is( originalContent, 'export const version = "1.0.0";\n' );
 } );
 
-test.serial( 'minifyFile on .cjs writes sibling .min.cjs and leaves original unchanged', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'minify on .cjs writes sibling .min.cjs and leaves original unchanged', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minify' );
 	const sourcePath: string = path.join( ws, 'dist/lib.cjs' );
 	const minPath: string = path.join( ws, 'dist/lib.min.cjs' );
@@ -213,7 +213,7 @@ test.serial( 'minifyFile on .cjs writes sibling .min.cjs and leaves original unc
 	await mkdir( path.dirname( sourcePath ), { recursive: true } );
 	await writeFile( sourcePath, 'module.exports = { x: 1 };\n' );
 
-	const result: boolean = await TsBuild.minifyFile( sourcePath, true, false );
+	const result: boolean = await TsBuild.minify( sourcePath, true, false );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -222,7 +222,7 @@ test.serial( 'minifyFile on .cjs writes sibling .min.cjs and leaves original unc
 	t.is( originalContent, 'module.exports = { x: 1 };\n' );
 } );
 
-test.serial( 'minifyFile on extensionless file writes sibling .min and leaves original unchanged', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'minify on extensionless file writes sibling .min and leaves original unchanged', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minify' );
 	const sourcePath: string = path.join( ws, 'dist/bundle' );
 	const minPath: string = path.join( ws, 'dist/bundle.min' );
@@ -230,7 +230,7 @@ test.serial( 'minifyFile on extensionless file writes sibling .min and leaves or
 	await mkdir( path.dirname( sourcePath ), { recursive: true } );
 	await writeFile( sourcePath, 'export const version = "1.0.0";\n' );
 
-	const result: boolean = await TsBuild.minifyFile( sourcePath, true, false );
+	const result: boolean = await TsBuild.minify( sourcePath, true, false );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -239,7 +239,7 @@ test.serial( 'minifyFile on extensionless file writes sibling .min and leaves or
 	t.is( originalContent, 'export const version = "1.0.0";\n' );
 } );
 
-test.serial( 'minifyFile on comments-only .js removes stale .min.js and returns false', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'minify on comments-only .js removes stale .min.js and returns false', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minify' );
 	const sourcePath: string = path.join( ws, 'dist/empty.js' );
 	const minPath: string = path.join( ws, 'dist/empty.min.js' );
@@ -248,7 +248,7 @@ test.serial( 'minifyFile on comments-only .js removes stale .min.js and returns 
 	await writeFile( sourcePath, '// just a comment\n/* another one */\n' );
 	await writeFile( minPath, 'stale content\n' );
 
-	const result: boolean = await TsBuild.minifyFile( sourcePath, true, false );
+	const result: boolean = await TsBuild.minify( sourcePath, true, false );
 
 	t.false( result );
 	t.true( await exists( sourcePath ) );
@@ -256,7 +256,7 @@ test.serial( 'minifyFile on comments-only .js removes stale .min.js and returns 
 	t.false( await exists( minPath ) );
 } );
 
-test.serial( 'minifyFile with both transforms on comments-only source lets TerserCompanion fall back to original', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'minify with both transforms on comments-only source lets TerserCompanion fall back to original', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minify' );
 	const sourcePath: string = path.join( ws, 'dist/empty.js' );
 	const minPath: string = path.join( ws, 'dist/empty.min.js' );
@@ -265,7 +265,7 @@ test.serial( 'minifyFile with both transforms on comments-only source lets Terse
 	await writeFile( sourcePath, '// just a comment\n/* another one */\n' );
 
 	// Both transforms active: Terser produces nothing, TerserCompanion receives original source
-	const result: boolean = await TsBuild.minifyFile( sourcePath, true, true );
+	const result: boolean = await TsBuild.minify( sourcePath, true, true );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -280,10 +280,7 @@ test.serial( 'default copy and templates resolve prefix sources and config-root 
 	await mkdir( path.join( workspace, 'out/assets' ), { recursive: true } );
 	await writeFile( path.join( workspace, 'out/assets/stale.txt' ), 'stale' );
 
-	const builder: TsBuild = await TsBuild.fromConfigFile( path.join( workspace, 'default.json' ) );
-	const result: boolean = await builder.build( new Set<string>( [ 'lib' ] ) );
-
-	t.true( result );
+	await buildItem( workspace, 'default.json', 'lib' );
 
 	// Copied files present
 	t.true( await exists( path.join( workspace, 'out/assets/one.txt' ) ), 'one.txt copied' );
@@ -312,10 +309,7 @@ test.serial( 'clean copy removes destination then copies files', async ( t: Exec
 	await mkdir( path.join( workspace, 'out/assets' ), { recursive: true } );
 	await writeFile( path.join( workspace, 'out/assets/stale.txt' ), 'stale' );
 
-	const builder: TsBuild = await TsBuild.fromConfigFile( path.join( workspace, 'clean.json' ) );
-	const result: boolean = await builder.build( new Set<string>( [ 'lib' ] ) );
-
-	t.true( result );
+	await buildItem( workspace, 'clean.json', 'lib' );
 
 	// Stale file gone
 	t.false( await exists( path.join( workspace, 'out/assets/stale.txt' ) ), 'stale.txt removed by clean' );
@@ -325,12 +319,11 @@ test.serial( 'clean copy removes destination then copies files', async ( t: Exec
 	t.true( await exists( path.join( workspace, 'out/assets/two.txt' ) ), 'two.txt copied after clean' );
 } );
 
-test.serial( 'build all targets in declaration order: last target output overwrites previous', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'runCli builds all targets in declaration order: last target output overwrites previous', async ( t: ExecutionContext ): Promise<void> => {
 	const workspace: string = await createWorkspace( 'target-order' );
-	const builder: TsBuild = await TsBuild.fromConfigFile( path.join( workspace, 'tsBuild.json' ) );
-	const result: boolean = await builder.build( new Set<string>( [ 'all' ] ) );
+	const exitCode: number = await TsBuild.runCli( [ '-f', path.join( workspace, 'tsBuild.json' ), 'all' ] );
 
-	t.true( result );
+	t.is( exitCode, 0 );
 	t.true( await exists( path.join( workspace, 'shared/index.js' ) ), 'shared/index.js exists' );
 
 	const content: string = await readFile( path.join( workspace, 'shared/index.js' ), 'utf8' );
@@ -340,10 +333,7 @@ test.serial( 'build all targets in declaration order: last target output overwri
 test.serial( 'copy with clean precedes template rendering to same destination', async ( t: ExecutionContext ): Promise<void> => {
 	const workspace: string = await createWorkspace( 'post-build' );
 
-	const builder: TsBuild = await TsBuild.fromConfigFile( path.join( workspace, 'ordered.json' ) );
-	const result: boolean = await builder.build( new Set<string>( [ 'lib' ] ) );
-
-	t.true( result );
+	await buildItem( workspace, 'ordered.json', 'lib' );
 
 	// Copy ran first — copied asset exists
 	t.true( await exists( path.join( workspace, 'ordered/one.txt' ) ), 'one.txt copied to ordered/' );
@@ -369,21 +359,21 @@ test.serial( 'library import with nonexistent argv[1] does not trigger CLI build
 	t.pass( 'import with nonexistent argv[1] exits 0 (or promise would reject)' );
 } );
 
-test.serial( 'compileTsc throws on malformed tsconfig JSON', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'compile throws on malformed tsconfig JSON', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minimal' );
 	await writeFile( path.join( ws, 'tsconfig.json' ), '{ invalid json }' );
 
-	t.throws( () => TsBuild.compileTsc( path.join( ws, 'tsconfig.json' ) ) );
+	t.throws( () => TsBuild.compile( path.join( ws, 'tsconfig.json' ) ) );
 } );
 
-test.serial( 'compileTsc throws on type diagnostics', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'compile throws on type diagnostics', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minimal' );
 	await writeFile( path.join( ws, 'src/index.ts' ), 'const value: number = \'wrong\';\n' );
 
-	t.throws( () => TsBuild.compileTsc( path.join( ws, 'tsconfig.json' ) ) );
+	t.throws( () => TsBuild.compile( path.join( ws, 'tsconfig.json' ) ) );
 } );
 
-test.serial( 'minifyFile on comments-only .js rethrows EISDIR from unlink when output path is a directory', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'minify on comments-only .js rethrows EISDIR from unlink when output path is a directory', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minify' );
 	const sourcePath: string = path.join( ws, 'dist/dirpath.js' );
 	const dirPath: string = path.join( ws, 'dist/dirpath.min.js' );
@@ -393,12 +383,12 @@ test.serial( 'minifyFile on comments-only .js rethrows EISDIR from unlink when o
 	await mkdir( dirPath, { recursive: true } );
 
 	const error: NodeJS.ErrnoException = await t.throwsAsync(
-		async (): Promise<boolean> => TsBuild.minifyFile( sourcePath, true, false )
+		async (): Promise<boolean> => TsBuild.minify( sourcePath, true, false )
 	);
 	t.is( error.code, 'EISDIR' );
 } );
 
-test.serial( 'minifyFile on absent .min file catches ENOENT from unlink', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'minify on absent .min file catches ENOENT from unlink', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minify' );
 	const sourcePath: string = path.join( ws, 'dist/absent.js' );
 	const minPath: string = path.join( ws, 'dist/absent.min.js' );
@@ -407,13 +397,13 @@ test.serial( 'minifyFile on absent .min file catches ENOENT from unlink', async 
 	await writeFile( sourcePath, '// just a comment\n/* another one */\n' );
 	// deliberately no min file — unlink throws ENOENT
 
-	const result: boolean = await TsBuild.minifyFile( sourcePath, true, false );
+	const result: boolean = await TsBuild.minify( sourcePath, true, false );
 
 	t.false( result );
 	t.false( await exists( minPath ) );
 } );
 
-test.serial( 'minifyFile picks companion when its output is strictly smaller', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'minify picks companion when its output is strictly smaller', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minify' );
 	const sourcePath: string = path.join( ws, 'dist/companion-wins.js' );
 	const minPath: string = path.join( ws, 'dist/companion-wins.min.js' );
@@ -444,7 +434,7 @@ test.serial( 'minifyFile picks companion when its output is strictly smaller', a
 
 	t.true( companionSize < terserSize, `expected companion ${ companionSize } < terser ${ terserSize }` );
 
-	const result: boolean = await TsBuild.minifyFile( sourcePath, true, true );
+	const result: boolean = await TsBuild.minify( sourcePath, true, true );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -453,20 +443,18 @@ test.serial( 'minifyFile picks companion when its output is strictly smaller', a
 	t.is( minContent, companionOutput );
 } );
 
-test.serial( 'build returns false for unknown target name', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'runCli returns exit code 1 for unknown target name', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minimal' );
-	const builder: TsBuild = await TsBuild.fromConfigFile( path.join( ws, 'tsBuild.json' ) );
-	const result: boolean = await builder.build( new Set<string>( [ 'unknown' ] ) );
+	const exitCode: number = await TsBuild.runCli( [ '-f', path.join( ws, 'tsBuild.json' ), 'unknown' ] );
 
-	t.false( result );
+	t.is( exitCode, 1 );
 } );
 
-test.serial( 'build returns false for empty target selection', async ( t: ExecutionContext ): Promise<void> => {
+test.serial( 'runCli returns exit code 1 for empty target selection', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minimal' );
-	const builder: TsBuild = await TsBuild.fromConfigFile( path.join( ws, 'tsBuild.json' ) );
-	const result: boolean = await builder.build( new Set<string>() );
+	const exitCode: number = await TsBuild.runCli( [ '-f', path.join( ws, 'tsBuild.json' ) ] );
 
-	t.false( result );
+	t.is( exitCode, 1 );
 } );
 
 test.serial( 'runCli returns exit code 1 for missing config file', async ( t: ExecutionContext ): Promise<void> => {

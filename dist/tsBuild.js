@@ -1,28 +1,18 @@
 #!/usr/bin/env node
+import jTDAL from '@stefanobalocco/jtdal';
+import terserCompanion from '@stefanobalocco/tersercompanion';
 import { LogLevel, ZeptoLogger } from '@stefanobalocco/zeptologger';
 import { copyFile, mkdir, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import ts from 'typescript';
+import { fileURLToPath } from 'node:url';
 import { minify } from 'terser';
-import terserCompanion from '@stefanobalocco/tersercompanion';
-import jTDAL from '@stefanobalocco/jtdal';
+import ts from 'typescript';
 export default class TsBuild {
     _configDirectory;
-    _targets;
-    _targetsNames;
-    constructor(configDirectory, targets) {
+    constructor(configDirectory) {
         this._configDirectory = configDirectory;
-        this._targets = targets;
-        this._targetsNames = new Set(this._targets.map((target) => target.target));
     }
-    static async fromConfigFile(configFile) {
-        const resolvedConfigFile = path.resolve(configFile);
-        const content = await readFile(resolvedConfigFile, 'utf8');
-        const targets = JSON.parse(content);
-        return new TsBuild(path.dirname(resolvedConfigFile), targets);
-    }
-    static compileTsc(configPath) {
+    static compile(configPath) {
         const absConfig = path.resolve(configPath);
         const configFile = ts.readConfigFile(absConfig, ts.sys.readFile);
         if (configFile.error) {
@@ -48,7 +38,7 @@ export default class TsBuild {
             }));
         }
     }
-    static async minifyFile(absPath, useTerser, useTerserCompanion) {
+    static async minify(absPath, useTerser, useTerserCompanion) {
         let returnValue = false;
         if (useTerser || useTerserCompanion) {
             const source = await readFile(absPath, 'utf8');
@@ -91,112 +81,117 @@ export default class TsBuild {
         }
         return returnValue;
     }
-    async build(targetNamesRequested) {
-        let returnValue = false;
-        const namesMutable = new Set(targetNamesRequested);
-        if (namesMutable.has('all')) {
-            namesMutable.delete('all');
-            for (const allowed of this._targetsNames) {
-                namesMutable.add(allowed);
-            }
+    static async copy(absDestination, absFiles, clean) {
+        if (clean) {
+            await rm(absDestination, { recursive: true, force: true });
         }
-        const selected = namesMutable.intersection(this._targetsNames);
-        const invalid = namesMutable.difference(this._targetsNames);
-        if ((0 < selected.size) && (0 === invalid.size)) {
-            const cL1 = this._targets.length;
-            for (let iL1 = 0; iL1 < cL1; iL1++) {
-                const item = this._targets[iL1];
-                if (selected.has(item.target)) {
-                    const targetLabel = (item.name ?? item.target).toUpperCase();
-                    const targetDirectory = path.resolve(this._configDirectory, item.prefix ?? '');
-                    const absConfig = path.resolve(targetDirectory, item.tsConfig);
-                    if (item.minify) {
-                        item.minify.terser ??= true;
-                        item.minify.terserCompanion ??= true;
-                    }
-                    else {
-                        item.minify = {
-                            files: []
-                        };
-                    }
-                    ZeptoLogger.instance.log(LogLevel.INFO, `[${targetLabel}] Compiling TypeScript...`);
-                    TsBuild.compileTsc(absConfig);
-                    if (item.minify.terser || item.minify.terserCompanion) {
-                        const cL2 = item.minify.files.length;
-                        for (let iL2 = 0; iL2 < cL2; iL2++) {
-                            const absFile = path.resolve(targetDirectory, item.minify.files[iL2]);
-                            ZeptoLogger.instance.log(LogLevel.INFO, `[${targetLabel}] Minifying ${path.relative(this._configDirectory, absFile)}...`);
-                            await TsBuild.minifyFile(absFile, item.minify.terser, item.minify.terserCompanion);
-                        }
-                    }
-                    if (item.copy) {
-                        const cL2 = item.copy.length;
-                        for (let iL2 = 0; iL2 < cL2; iL2++) {
-                            const copy = item.copy[iL2];
-                            const absDestination = path.resolve(this._configDirectory, copy.destination);
-                            if (copy.clean) {
-                                await rm(absDestination, { recursive: true, force: true });
-                            }
-                            await mkdir(absDestination, { recursive: true });
-                            const cL3 = copy.files.length;
-                            for (let iL3 = 0; iL3 < cL3; iL3++) {
-                                const file = copy.files[iL3];
-                                const absSource = path.resolve(targetDirectory, file);
-                                const absTarget = path.resolve(absDestination, path.basename(file));
-                                await copyFile(absSource, absTarget);
-                            }
-                        }
-                    }
-                    if (item.templates) {
-                        const cL2 = item.templates.length;
-                        for (let iL2 = 0; iL2 < cL2; iL2++) {
-                            const template = item.templates[iL2];
-                            const absTemplate = path.resolve(targetDirectory, template.filename);
-                            const templateSource = await readFile(absTemplate, 'utf8');
-                            const data = {};
-                            const cL3 = template.variables.length;
-                            for (let iL3 = 0; iL3 < cL3; iL3++) {
-                                const variable = template.variables[iL3];
-                                if ('string' === variable.type) {
-                                    data[variable.name] = variable.value;
-                                }
-                                else {
-                                    data[variable.name] = (await stat(path.resolve(targetDirectory, variable.value))).mtimeMs;
-                                }
-                            }
-                            const output = new jTDAL().CompileToFunction(templateSource)(data);
-                            const absDestination = path.resolve(this._configDirectory, template.destination);
-                            await mkdir(absDestination, { recursive: true });
-                            await writeFile(path.resolve(absDestination, path.basename(template.filename)), output, 'utf8');
-                        }
-                    }
-                    ZeptoLogger.instance.log(LogLevel.INFO, `[${targetLabel}] ✓ Built.`);
-                }
-            }
-            returnValue = true;
+        await mkdir(absDestination, { recursive: true });
+        const cL1 = absFiles.length;
+        for (let iL1 = 0; iL1 < cL1; iL1++) {
+            const absFile = absFiles[iL1];
+            await copyFile(absFile, path.resolve(absDestination, path.basename(absFile)));
+        }
+    }
+    static async templating(absTemplate, absDestination, variables) {
+        const templateSource = await readFile(absTemplate, 'utf8');
+        const output = new jTDAL().CompileToFunction(templateSource)(variables);
+        await mkdir(absDestination, { recursive: true });
+        await writeFile(path.resolve(absDestination, path.basename(absTemplate)), output, 'utf8');
+    }
+    async build(buildItem) {
+        const targetLabel = (buildItem.name ?? buildItem.target).toUpperCase();
+        const targetDirectory = path.resolve(this._configDirectory, buildItem.prefix ?? '');
+        const absConfig = path.resolve(targetDirectory, buildItem.tsConfig);
+        if (buildItem.minify) {
+            buildItem.minify.terser ??= true;
+            buildItem.minify.terserCompanion ??= true;
         }
         else {
-            if (0 < invalid.size) {
-                ZeptoLogger.instance.log(LogLevel.ERROR, `Unknown target(s): ${[...invalid].join(', ')}`);
-            }
-            ZeptoLogger.instance.log(LogLevel.INFO, 'Usage: tsBuild [-f tsBuild.json] <target> [<target> ...]');
-            ZeptoLogger.instance.log(LogLevel.INFO, `Available targets: ${[...this._targetsNames].join(', ')}, all`);
+            buildItem.minify = {
+                files: []
+            };
         }
-        return returnValue;
+        ZeptoLogger.instance.log(LogLevel.INFO, `[${targetLabel}] Compiling TypeScript...`);
+        TsBuild.compile(absConfig);
+        if (buildItem.minify.terser || buildItem.minify.terserCompanion) {
+            const cL1 = buildItem.minify.files.length;
+            for (let iL1 = 0; iL1 < cL1; iL1++) {
+                const absFile = path.resolve(targetDirectory, buildItem.minify.files[iL1]);
+                ZeptoLogger.instance.log(LogLevel.INFO, `[${targetLabel}] Minifying ${path.relative(this._configDirectory, absFile)}...`);
+                await TsBuild.minify(absFile, buildItem.minify.terser, buildItem.minify.terserCompanion);
+            }
+        }
+        if (buildItem.copy) {
+            const cL1 = buildItem.copy.length;
+            for (let iL1 = 0; iL1 < cL1; iL1++) {
+                const copy = buildItem.copy[iL1];
+                const absDestination = path.resolve(this._configDirectory, copy.destination);
+                const absFiles = [];
+                const cL2 = copy.files.length;
+                for (let iL2 = 0; iL2 < cL2; iL2++) {
+                    absFiles[iL2] = path.resolve(targetDirectory, copy.files[iL2]);
+                }
+                await TsBuild.copy(absDestination, absFiles, copy.clean ?? false);
+            }
+        }
+        if (buildItem.templates) {
+            const cL1 = buildItem.templates.length;
+            for (let iL1 = 0; iL1 < cL1; iL1++) {
+                const template = buildItem.templates[iL1];
+                const absTemplate = path.resolve(targetDirectory, template.filename);
+                const absDestination = path.resolve(this._configDirectory, template.destination);
+                const variables = {};
+                const cL2 = template.variables.length;
+                for (let iL2 = 0; iL2 < cL2; iL2++) {
+                    const variable = template.variables[iL2];
+                    if ('string' === variable.type) {
+                        variables[variable.name] = variable.value;
+                    }
+                    else {
+                        variables[variable.name] = (await stat(path.resolve(targetDirectory, variable.value))).mtimeMs;
+                    }
+                }
+                await TsBuild.templating(absTemplate, absDestination, variables);
+            }
+        }
+        ZeptoLogger.instance.log(LogLevel.INFO, `[${targetLabel}] ✓ Built.`);
     }
     static async runCli(argumentsInput) {
         let exitCode = 1;
         let configFile = 'tsBuild.json';
-        let targetNamesArgs = new Set(argumentsInput);
+        let targetsArgs = new Set(argumentsInput);
         if ((2 <= argumentsInput.length) && ('-f' === argumentsInput[0])) {
             configFile = argumentsInput[1];
-            targetNamesArgs = new Set(argumentsInput.slice(2));
+            targetsArgs = new Set(argumentsInput.slice(2));
         }
         try {
-            const builder = await TsBuild.fromConfigFile(path.resolve(process.cwd(), configFile));
-            const success = await builder.build(targetNamesArgs);
-            if (success) {
+            const resolvedConfigFile = path.resolve(process.cwd(), configFile);
+            const content = await readFile(resolvedConfigFile, 'utf8');
+            const buildItems = JSON.parse(content);
+            const builder = new TsBuild(path.dirname(resolvedConfigFile));
+            const targetsValid = new Set(buildItems.map((item) => item.target));
+            if (targetsArgs.has('all')) {
+                targetsArgs.delete('all');
+                for (const allowed of targetsValid) {
+                    targetsArgs.add(allowed);
+                }
+            }
+            const targetsSelected = targetsArgs.intersection(targetsValid);
+            const targetsInvalid = targetsArgs.difference(targetsValid);
+            if ((0 < targetsSelected.size) && (0 === targetsInvalid.size)) {
+                for (const buildItem of buildItems) {
+                    if (targetsSelected.has(buildItem.target)) {
+                        await builder.build(buildItem);
+                    }
+                }
                 exitCode = 0;
+            }
+            else {
+                if (0 < targetsInvalid.size) {
+                    console.log(`Unknown target(s): ${[...targetsInvalid].join(', ')}`);
+                }
+                console.log('Usage: tsBuild [-f tsBuild.json] <target> [<target> ...]');
+                console.log(`Available targets: ${[...targetsValid].join(', ')}, all`);
             }
         }
         catch (err) {

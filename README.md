@@ -128,35 +128,38 @@ type TsBuildItem = {
 };
 ```
 
-### `new TsBuild( configDirectory: string, targets: TsBuildItem[] )`
+### `new TsBuild( configDirectory: string )`
 
-Create a builder. Targets run in the order provided.
+Create a builder that resolves relative paths from the configuration directory.
 
-### `TsBuild.fromConfigFile( configFile: string ): Promise<TsBuild>`
-
-Load targets from a JSON config file.
-
-### `TsBuild.compileTsc( configPath: string ): void`
+### `TsBuild.compile( configPath: string ): void`
 
 Compile TypeScript using the compiler API. Throws on diagnostic errors.
 
-### `TsBuild.minifyFile( absPath: string, useTerser: boolean, useTerserCompanion: boolean ): Promise<boolean>`
+### `TsBuild.minify( absPath: string, useTerser: boolean, useTerserCompanion: boolean ): Promise<boolean>`
 
 Minify a single JS file. Writes minified output as a sibling file named with `.min` before the original extension: `index.js` → `index.min.js`, `lib.mjs` → `lib.min.mjs`, `lib.cjs` → `lib.min.cjs`. Returns `true` when minified output is written.
 
-### `builder.build( targetNames: Set<string> ): Promise<boolean>`
+### `TsBuild.copy( absDestination: string, absFiles: string[], clean: boolean ): Promise<void>`
 
-Build selected targets. Pass `new Set( [ 'all' ] )` for all targets. Returns `false` on unknown targets or empty selection.
+Copy files to a destination directory. All paths must be absolute. When `clean` is true, the destination is removed before copying.
+
+### `TsBuild.templating( absTemplate: string, absDestination: string, variables: Record<string, string | number> ): Promise<void>`
+
+Render a jTDAL template file and write the output to the destination directory. The template source path and destination path must be absolute. Output filename uses `path.basename()` of the template source.
+
+### `builder.build( buildItem: TsBuildItem ): Promise<void>`
+
+Build a single item: compile TypeScript, optionally minify files, then run copy and template operations. This is the sole instance build method.
 
 ### `TsBuild.runCli( argumentsInput: string[] ): Promise<number>`
 
-CLI entry point. Returns exit code (0 on success, 1 on error).
+CLI entry point. Returns 0 only after at least one valid selected target completes. Returns 1 for unknown target names, empty target selection, missing config file, or build error.
 
 ## Errors
 
-- TypeScript diagnostics cause `compileTsc` and `build` to throw with formatted error output
+- TypeScript diagnostics cause `compile` and `build` to throw with formatted error output
 - CLI returns 1 when build fails or invalid arguments are provided
-- `build` returns `false` for unknown or empty target selections
 
 ## License
 

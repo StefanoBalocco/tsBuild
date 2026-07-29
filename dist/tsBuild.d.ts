@@ -26,12 +26,11 @@ export type TsBuildItem = {
 };
 export default class TsBuild {
     private readonly _configDirectory;
-    private readonly _targets;
-    private readonly _targetsNames;
-    constructor(configDirectory: string, targets: TsBuildItem[]);
-    static fromConfigFile(configFile: string): Promise<TsBuild>;
-    static compileTsc(configPath: string): void;
-    static minifyFile(absPath: string, useTerser: boolean, useTerserCompanion: boolean): Promise<boolean>;
-    build(targetNamesRequested: Set<string>): Promise<boolean>;
+    constructor(configDirectory: string);
+    static compile(configPath: string): void;
+    static minify(absPath: string, useTerser: boolean, useTerserCompanion: boolean): Promise<boolean>;
+    static copy(absDestination: string, absFiles: string[], clean: boolean): Promise<void>;
+    static templating(absTemplate: string, absDestination: string, variables: Record<string, string | number>): Promise<void>;
+    build(buildItem: TsBuildItem): Promise<void>;
     static runCli(argumentsInput: string[]): Promise<number>;
 }

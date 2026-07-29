@@ -1,0 +1,12 @@
+[
+	{
+		"target": "backend",
+		"tsConfig": "tsconfig.json",
+		"name": "Backend"
+	},
+	{
+		"target": "tests",
+		"tsConfig": "tests/tsconfig.json",
+		"name": "Tests"
+	}
+]
