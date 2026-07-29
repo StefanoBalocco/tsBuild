@@ -158,7 +158,7 @@ export default class TsBuild {
     }
     static async runCli(argumentsInput) {
         let exitCode = 1;
-        let configFile = 'tsBuild.json';
+        let configFile = './tsBuild.json';
         let targetsArgs = new Set(argumentsInput);
         if ((2 <= argumentsInput.length) && ('-f' === argumentsInput[0])) {
             configFile = argumentsInput[1];
@@ -191,6 +191,7 @@ export default class TsBuild {
                     console.log(`Unknown target(s): ${[...targetsInvalid].join(', ')}`);
                 }
                 console.log('Usage: tsBuild [-f tsBuild.json] <target> [<target> ...]');
+                console.log(`Using ${configFile}:`);
                 console.log(`Available targets: ${[...targetsValid].join(', ')}, all`);
             }
         }

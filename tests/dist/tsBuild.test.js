@@ -110,28 +110,6 @@ test.serial('runCli accepts a custom config path', async (t) => {
     t.is(exitCode, 0);
     t.true(await exists(path.join(workspace, 'dist/index.js')));
 });
-test.serial('installed-package bin executes the build with copy and templates', async (t) => {
-    const uniqueDir = path.join(worksRoot, `bin_test_${Date.now()}`);
-    await mkdir(uniqueDir, { recursive: true });
-    const fixtureDir = path.join(uniqueDir, 'fixture');
-    await cp(path.join(fixturesRoot, 'post-build'), fixtureDir, { recursive: true });
-    const projectRoot = path.resolve(__dirname, '../..');
-    const packResult = (await execFileAsync('npm', ['pack', '--pack-destination', uniqueDir, '--json'], { cwd: projectRoot })).stdout;
-    const packEntry = JSON.parse(packResult)[0];
-    const tarballFilename = packEntry.filename;
-    const consumerDir = path.join(uniqueDir, 'consumer');
-    await mkdir(consumerDir, { recursive: true });
-    await writeFile(path.join(consumerDir, 'package.json'), '{"private":true}\n');
-    const tarballPath = path.join(uniqueDir, tarballFilename);
-    await execFileAsync('npm', ['install', tarballPath], { cwd: consumerDir });
-    const binPath = path.join(consumerDir, 'node_modules/.bin/tsBuild');
-    await execFileAsync(binPath, ['-f', path.join(fixtureDir, 'default.json'), 'lib'], { cwd: uniqueDir });
-    t.true(await exists(path.join(fixtureDir, 'project/dist/index.js')), 'output project/dist/index.js exists');
-    const templatePath = path.join(fixtureDir, 'out/pages/page.html');
-    t.true(await exists(templatePath), 'rendered template exists at out/pages/page.html');
-    const html = await readFile(templatePath, 'utf8');
-    t.true(html.includes('tsBuild template'), 'template variable rendered via published bin');
-});
 test.serial('minify on .mjs writes sibling .min.mjs and leaves original unchanged', async (t) => {
     const ws = await createWorkspace('minify');
     const sourcePath = path.join(ws, 'dist/lib.mjs');

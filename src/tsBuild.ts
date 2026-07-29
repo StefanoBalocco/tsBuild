@@ -219,7 +219,7 @@ export default class TsBuild {
 
 	public static async runCli( argumentsInput: string[] ): Promise<number> {
 		let exitCode: number = 1;
-		let configFile: string = 'tsBuild.json';
+		let configFile: string = './tsBuild.json';
 		let targetsArgs: Set<string> = new Set( argumentsInput );
 
 		if( ( 2 <= argumentsInput.length ) && ( '-f' === argumentsInput[ 0 ] ) ) {
@@ -258,14 +258,15 @@ export default class TsBuild {
 					}
 				}
 				exitCode = 0;
-			} else {
+		} else {
 			if( 0 < targetsInvalid.size ) {
 				console.log( `Unknown target(s): ${ [ ...targetsInvalid ].join( ', ' ) }` );
 			}
 
 			console.log( 'Usage: tsBuild [-f tsBuild.json] <target> [<target> ...]' );
+			console.log( `Using ${ configFile }:` );
 			console.log( `Available targets: ${ [ ...targetsValid ].join( ', ' ) }, all` );
-			}
+		}
 		} catch( err: unknown ) {
 			ZeptoLogger.instance.log( LogLevel.ERROR, err );
 		}

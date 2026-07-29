@@ -1,8 +1,8 @@
 [
 	{
-		"target": "backend",
+		"target": "tool",
 		"tsConfig": "tsconfig.json",
-		"name": "Backend"
+		"name": "Tool"
 	},
 	{
 		"target": "tests",

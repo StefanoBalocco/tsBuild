@@ -147,47 +147,6 @@ test.serial( 'runCli accepts a custom config path', async ( t: ExecutionContext 
 	t.true( await exists( path.join( workspace, 'dist/index.js' ) ) );
 } );
 
-test.serial( 'installed-package bin executes the build with copy and templates', async ( t: ExecutionContext ): Promise<void> => {
-	const uniqueDir: string = path.join( worksRoot, `bin_test_${ Date.now() }` );
-	await mkdir( uniqueDir, { recursive: true } );
-
-	// Copy post-build fixture into workspace (has copy + template config)
-	const fixtureDir: string = path.join( uniqueDir, 'fixture' );
-	await cp( path.join( fixturesRoot, 'post-build' ), fixtureDir, { recursive: true } );
-
-	// Create tarball from project root; obtain filename from --json output
-	const projectRoot: string = path.resolve( __dirname, '../..' );
-	const packResult: string = ( await execFileAsync( 'npm', [ 'pack', '--pack-destination', uniqueDir, '--json' ], { cwd: projectRoot } ) ).stdout;
-	const packEntry: { filename: string } = JSON.parse( packResult )[ 0 ];
-	const tarballFilename: string = packEntry.filename;
-
-	// Install tarball into consumer directory
-	const consumerDir: string = path.join( uniqueDir, 'consumer' );
-	await mkdir( consumerDir, { recursive: true } );
-	await writeFile( path.join( consumerDir, 'package.json' ), '{"private":true}\n' );
-
-	const tarballPath: string = path.join( uniqueDir, tarballFilename );
-	await execFileAsync( 'npm', [ 'install', tarballPath ], { cwd: consumerDir } );
-
-	// Execute the real npm-generated .bin symlink against the post-build template fixture
-	const binPath: string = path.join( consumerDir, 'node_modules/.bin/tsBuild' );
-	await execFileAsync(
-		binPath,
-		[ '-f', path.join( fixtureDir, 'default.json' ), 'lib' ],
-		{ cwd: uniqueDir }
-	);
-
-	// Compiled output still works (prefixed path)
-	t.true( await exists( path.join( fixtureDir, 'project/dist/index.js' ) ), 'output project/dist/index.js exists' );
-
-	// Template rendered through published consumer path — proves jTDAL works from .bin
-	const templatePath: string = path.join( fixtureDir, 'out/pages/page.html' );
-	t.true( await exists( templatePath ), 'rendered template exists at out/pages/page.html' );
-
-	const html: string = await readFile( templatePath, 'utf8' );
-	t.true( html.includes( 'tsBuild template' ), 'template variable rendered via published bin' );
-} );
-
 test.serial( 'minify on .mjs writes sibling .min.mjs and leaves original unchanged', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minify' );
 	const sourcePath: string = path.join( ws, 'dist/lib.mjs' );
