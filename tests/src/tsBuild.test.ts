@@ -256,9 +256,9 @@ test.serial( 'default copy and templates resolve prefix sources and config-root 
 	const html: string = await readFile( templatePath, 'utf8' );
 	t.true( html.includes( 'tsBuild template' ), 'title variable rendered' );
 
-	// Raw numeric mtimeMs
+	// Raw numeric mtime
 	const mtimeStat: Stats = await stat( path.join( workspace, 'project/assets/mtime.txt' ) );
-	t.true( html.includes( String( mtimeStat.mtimeMs ) ), 'raw mtimeMs rendered' );
+	t.true( html.includes( String( mtimeStat.mtime.getTime() ) ), 'raw mtime rendered' );
 } );
 
 test.serial( 'clean copy removes destination then copies files', async ( t: ExecutionContext ): Promise<void> => {

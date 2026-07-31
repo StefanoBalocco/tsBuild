@@ -185,7 +185,7 @@ test.serial('default copy and templates resolve prefix sources and config-root d
     const html = await readFile(templatePath, 'utf8');
     t.true(html.includes('tsBuild template'), 'title variable rendered');
     const mtimeStat = await stat(path.join(workspace, 'project/assets/mtime.txt'));
-    t.true(html.includes(String(mtimeStat.mtimeMs)), 'raw mtimeMs rendered');
+    t.true(html.includes(String(mtimeStat.mtime.getTime())), 'raw mtime rendered');
 });
 test.serial('clean copy removes destination then copies files', async (t) => {
     const workspace = await createWorkspace('post-build');

@@ -144,11 +144,15 @@ export default class TsBuild {
                 const cL2 = template.variables.length;
                 for (let iL2 = 0; iL2 < cL2; iL2++) {
                     const variable = template.variables[iL2];
-                    if ('string' === variable.type) {
-                        variables[variable.name] = variable.value;
-                    }
-                    else {
-                        variables[variable.name] = (await stat(path.resolve(targetDirectory, variable.value))).mtimeMs;
+                    switch (variable.type) {
+                        case 'string': {
+                            variables[variable.name] = variable.value;
+                            break;
+                        }
+                        case 'mtime': {
+                            variables[variable.name] = (await stat(path.resolve(targetDirectory, variable.value))).mtime.getTime();
+                            break;
+                        }
                     }
                 }
                 await TsBuild.templating(absTemplate, absDestination, variables);
