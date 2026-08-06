@@ -1,0 +1,13 @@
+[
+	{
+		"target": "lib",
+		"tsConfig": "tsconfig.json",
+		"templates": [
+			{
+				"filename": "templates/plain",
+				"destination": "out",
+				"output": "esm"
+			}
+		]
+	}
+]

@@ -1,0 +1,16 @@
+[
+	{
+		"target": "lib",
+		"tsConfig": "tsconfig.json",
+		"templates": [
+			{
+				"filename": "templates/page.tpl",
+				"destination": "out",
+				"output": "esm",
+				"variables": [
+					{ "name": "missing", "type": "mtime", "value": "does-not-exist.txt" }
+				]
+			}
+		]
+	}
+]

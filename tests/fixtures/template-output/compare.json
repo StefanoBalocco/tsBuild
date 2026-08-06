@@ -1,0 +1,22 @@
+[
+	{
+		"target": "lib",
+		"tsConfig": "tsconfig.json",
+		"templates": [
+			{
+				"filename": "templates/page.tpl",
+				"destination": "out-default",
+				"output": "esm"
+			},
+			{
+				"filename": "templates/page.tpl",
+				"destination": "out-plain",
+				"output": "esm",
+				"minify": {
+					"terser": false,
+					"terserCompanion": false
+				}
+			}
+		]
+	}
+]

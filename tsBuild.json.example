@@ -2,7 +2,16 @@
 	{
 		"target": "backend",
 		"tsConfig": "tsconfig.json",
-		"name": "Backend"
+		"name": "Backend",
+		"minify": {
+			"files": [ "dist/server.js" ],
+			"terser": {
+				"enabled": true,
+				"module": false,
+				"mangle": "^_"
+			},
+			"terserCompanion": true
+		}
 	},
 	{
 		"target": "frontend",
@@ -10,9 +19,7 @@
 		"tsConfig": "tsconfig.json",
 		"name": "Frontend",
 		"minify": {
-			"files": [
-				"dist/app.js"
-			],
+			"files": [ "dist/app.js" ],
 			"terser": true,
 			"terserCompanion": true
 		},
@@ -40,6 +47,16 @@
 						"value": "dist/app.min.js"
 					}
 				]
+			},
+			{
+				"filename": "templates/renderer.tpl",
+				"destination": "dist/modules",
+				"output": "esm"
+			},
+			{
+				"filename": "templates/legacy.tpl",
+				"destination": "dist/legacy",
+				"output": "cjs"
 			}
 		]
 	},

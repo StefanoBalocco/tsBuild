@@ -1,11 +1,14 @@
 import test from 'ava';
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { Writable } from 'node:stream';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { minify } from 'terser';
 import terserCompanion from '@stefanobalocco/tersercompanion';
+import { ZeptoLogger } from '@stefanobalocco/zeptologger';
 import TsBuild from '../../dist/tsBuild.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturesRoot = path.resolve(__dirname, '../fixtures');
@@ -45,6 +48,26 @@ async function buildItem(workspace, configFile, targetName) {
         throw new Error(`Target "${targetName}" not found in ${configFile}`);
     }
     await builder.build(item);
+}
+async function runCliWithCapturedLog(argumentsInput) {
+    let returnValue;
+    const loggerDestination = ZeptoLogger.instance._destination;
+    let capturedOutput = '';
+    const collector = new Writable({
+        write(chunk, _encoding, callback) {
+            capturedOutput += chunk.toString();
+            callback();
+        }
+    });
+    ZeptoLogger.instance.destination = collector;
+    try {
+        const exitCode = await TsBuild.runCli(argumentsInput);
+        returnValue = { exitCode, output: capturedOutput };
+    }
+    finally {
+        ZeptoLogger.instance.destination = loggerDestination;
+    }
+    return returnValue;
 }
 test.after.always(async () => {
     await rm(worksRoot, { recursive: true, force: true });
@@ -300,4 +323,292 @@ test.serial('runCli returns exit code 1 for missing config file', async (t) => {
     const ws = await createWorkspace('minimal');
     const exitCode = await TsBuild.runCli(['-f', path.join(ws, 'missing.json'), 'lib']);
     t.is(exitCode, 1);
+});
+test.serial('runCli rejects configs with unknown nested terser keys', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            minify: {
+                files: ['dist/index.js'],
+                terser: { enabled: true, unknownKey: true }
+            }
+        }
+    ]));
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    const outputLines = result.output.split('\n');
+    t.is(result.exitCode, 1);
+    t.true(outputLines.includes('[0].minify.terser.unknownKey: Unrecognized key: "unknownKey"'));
+    t.false(outputLines.some((line) => line.includes('Invalid input: expected boolean, received object')));
+});
+test.serial('runCli rejects configs with invalid mangle regex text', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            minify: {
+                files: ['dist/index.js'],
+                terser: { mangle: '[' }
+            }
+        }
+    ]));
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    t.is(result.exitCode, 1);
+    t.true(result.output.includes('[0].minify.terser.mangle'));
+    t.true(result.output.includes('Invalid regular expression'));
+});
+test.serial('runCli rejects invalid template output enum', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            templates: [
+                { filename: 'page.tpl', destination: 'out', output: 'umd' }
+            ]
+        }
+    ]));
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    t.is(result.exitCode, 1);
+    t.true(result.output.includes('[0].templates[0].output'));
+});
+const strictSchemaCases = [
+    {
+        name: 'build item',
+        config: { target: 'lib', tsConfig: 'tsconfig.json', unknownBuildField: true },
+        expectedLine: '[0].unknownBuildField: Unrecognized key: "unknownBuildField"'
+    },
+    {
+        name: 'build minify',
+        config: { target: 'lib', tsConfig: 'tsconfig.json', minify: { files: ['dist/index.js'], unknownMinifyField: true } },
+        expectedLine: '[0].minify.unknownMinifyField: Unrecognized key: "unknownMinifyField"'
+    },
+    {
+        name: 'template',
+        config: { target: 'lib', tsConfig: 'tsconfig.json', templates: [{ filename: 'a.tpl', destination: 'out', unknownTemplateField: true }] },
+        expectedLine: '[0].templates[0].unknownTemplateField: Unrecognized key: "unknownTemplateField"'
+    },
+    {
+        name: 'variable',
+        config: { target: 'lib', tsConfig: 'tsconfig.json', templates: [{ filename: 'a.tpl', destination: 'out', variables: [{ name: 'x', type: 'string', value: 'y', unknownVariableField: true }] }] },
+        expectedLine: '[0].templates[0].variables[0].unknownVariableField: Unrecognized key: "unknownVariableField"'
+    },
+    {
+        name: 'copy',
+        config: { target: 'lib', tsConfig: 'tsconfig.json', copy: [{ destination: 'out', files: ['a.txt'], unknownCopyField: true }] },
+        expectedLine: '[0].copy[0].unknownCopyField: Unrecognized key: "unknownCopyField"'
+    }
+];
+let strictSchemaCase;
+for (strictSchemaCase of strictSchemaCases) {
+    test.serial(`runCli rejects unknown key in ${strictSchemaCase.name} object`, async (t) => {
+        const ws = await createWorkspace('minimal');
+        await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([strictSchemaCase.config]));
+        const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+        const outputLines = result.output.split('\n');
+        t.is(result.exitCode, 1);
+        t.true(outputLines.includes(strictSchemaCase.expectedLine));
+    });
+}
+test.serial('runCli reports root config type mismatch as root diagnostic', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify({ target: 'lib', tsConfig: 'tsconfig.json' }));
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    const outputLines = result.output.split('\n');
+    t.is(result.exitCode, 1);
+    t.true(outputLines.includes('(root): Invalid input: expected array, received object'));
+});
+test.serial('runCli rejects configs with duplicate targets', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
+        { target: 'lib', tsConfig: 'tsconfig.json' },
+        { target: 'lib', tsConfig: 'tsconfig.json' },
+        { target: 'other', tsConfig: 'tsconfig.json' },
+        { target: 'lib', tsConfig: 'tsconfig.json' },
+        { target: 'other', tsConfig: 'tsconfig.json' }
+    ]));
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    const outputLines = result.output.split('\n');
+    t.is(result.exitCode, 1);
+    t.true(outputLines.includes('[1].target: Duplicate target "lib"'));
+    t.true(outputLines.includes('[3].target: Duplicate target "lib"'));
+    t.true(outputLines.includes('[4].target: Duplicate target "other"'));
+});
+test.serial('runCli rejects malformed JSON config with validation prefix', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), '{ invalid json');
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    const outputLines = result.output.split('\n');
+    t.is(result.exitCode, 1);
+    t.true(outputLines.some((line) => line.includes('Invalid tsBuild configuration:')));
+});
+test.serial('runCli reports every invalid terser object field path', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            minify: {
+                files: ['dist/index.js'],
+                terser: { mangle: 42, unknownOne: true, unknownTwo: true }
+            }
+        }
+    ]));
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    const outputLines = result.output.split('\n');
+    t.is(result.exitCode, 1);
+    t.true(outputLines.includes('[0].minify.terser.mangle: Invalid input: expected false'));
+    t.true(outputLines.includes('[0].minify.terser.mangle: Invalid input: expected string, received number'));
+    t.true(outputLines.includes('[0].minify.terser.unknownOne: Unrecognized key: "unknownOne"'));
+    t.true(outputLines.includes('[0].minify.terser.unknownTwo: Unrecognized key: "unknownTwo"'));
+});
+test.serial('object-form terser config minifies with mangle false preserving underscore properties', async (t) => {
+    const ws = await createWorkspace('minify');
+    await writeFile(path.join(ws, 'src/index.ts'), [
+        'const widget = {',
+        '	_private: 42,',
+        '	render() { return this._private; }',
+        '};',
+        'console.log( widget.render() );',
+    ].join('\n'));
+    await writeFile(path.join(ws, 'object.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            minify: {
+                files: ['dist/index.js'],
+                terser: { enabled: true, module: false, toplevel: false, mangle: false },
+                terserCompanion: false
+            }
+        }
+    ]));
+    await buildItem(ws, 'object.json', 'lib');
+    const minPath = path.join(ws, 'dist/index.min.js');
+    t.true(await exists(minPath));
+    const minContent = await readFile(minPath, 'utf8');
+    t.true(minContent.includes('_private'));
+});
+test.serial('object-form terser config: toplevel false (the CJS default) retains unused helper, configured mangle regex renames customPrivate', async (t) => {
+    const source = [
+        'function unusedHelper() { return 42; }',
+        'const widget = {',
+        '	customPrivate: 1,',
+        '	render() { return this.customPrivate; }',
+        '};',
+        'console.log( widget.render() );',
+    ].join('\n');
+    const wsRetain = await createWorkspace('minify');
+    await mkdir(path.join(wsRetain, 'dist'), { recursive: true });
+    await writeFile(path.join(wsRetain, 'dist/script.js'), source);
+    await writeFile(path.join(wsRetain, 'retain.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            minify: {
+                files: ['dist/script.js'],
+                terser: { module: false, toplevel: false, mangle: '^custom' },
+                terserCompanion: false
+            }
+        }
+    ]));
+    await buildItem(wsRetain, 'retain.json', 'lib');
+    const retained = await readFile(path.join(wsRetain, 'dist/script.min.js'), 'utf8');
+    t.true(retained.includes('unusedHelper'));
+    t.false(retained.includes('customPrivate'));
+    const wsDrop = await createWorkspace('minify');
+    await mkdir(path.join(wsDrop, 'dist'), { recursive: true });
+    await writeFile(path.join(wsDrop, 'dist/script.js'), source);
+    await writeFile(path.join(wsDrop, 'drop.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            minify: {
+                files: ['dist/script.js'],
+                terser: { module: false, toplevel: true, mangle: false },
+                terserCompanion: false
+            }
+        }
+    ]));
+    await buildItem(wsDrop, 'drop.json', 'lib');
+    const dropped = await readFile(path.join(wsDrop, 'dist/script.min.js'), 'utf8');
+    t.false(dropped.includes('unusedHelper'));
+    t.true(dropped.includes('customPrivate'));
+});
+test.serial('minify toplevel true drops unused top-level declarations retained by toplevel false', async (t) => {
+    const ws = await createWorkspace('minify');
+    const sourcePath = path.join(ws, 'dist/toplevel.js');
+    const minPath = path.join(ws, 'dist/toplevel.min.js');
+    const source = [
+        'function unusedHelper() { return 42; }',
+        'function used() { return 1; }',
+        'console.log( used() );',
+    ].join('\n');
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(sourcePath, source);
+    const retainedResult = await TsBuild.minify(sourcePath, true, false, { module: false, toplevel: false });
+    t.true(retainedResult);
+    const retained = await readFile(minPath, 'utf8');
+    t.true(retained.includes('unusedHelper'));
+    const droppedResult = await TsBuild.minify(sourcePath, true, false, { module: false, toplevel: true });
+    t.true(droppedResult);
+    const dropped = await readFile(minPath, 'utf8');
+    t.false(dropped.includes('unusedHelper'));
+});
+test.serial('esm template output writes .mjs, ignores variables, and renders from runtime data', async (t) => {
+    const ws = await createWorkspace('template-output');
+    await buildItem(ws, 'esm.json', 'lib');
+    const pagePath = path.join(ws, 'out/page.mjs');
+    t.true(await exists(pagePath));
+    t.false(await exists(path.join(ws, 'out/page.html')));
+    t.false(await exists(path.join(ws, 'out/page.min.mjs')));
+    const mod = await import(pathToFileURL(pagePath).href);
+    const html = mod.default({ title: 'ESM title', stamp: 42 });
+    t.true(html.includes('ESM title'));
+    t.true(html.includes('42'));
+});
+test.serial('cjs template output writes .cjs, omits variables, and renders from runtime data', async (t) => {
+    const ws = await createWorkspace('template-output');
+    await buildItem(ws, 'cjs.json', 'lib');
+    const pagePath = path.join(ws, 'out/page.cjs');
+    t.true(await exists(pagePath));
+    t.false(await exists(path.join(ws, 'out/page.min.cjs')));
+    const require = createRequire(import.meta.url);
+    const renderer = require(pagePath);
+    const html = renderer({ title: 'CJS title', stamp: 7 });
+    t.true(html.includes('CJS title'));
+    t.true(html.includes('7'));
+});
+test.serial('esm template minification defaults are smaller and executable, opt-out keeps source', async (t) => {
+    const ws = await createWorkspace('template-output');
+    await buildItem(ws, 'compare.json', 'lib');
+    const defaultPath = path.join(ws, 'out-default/page.mjs');
+    const plainPath = path.join(ws, 'out-plain/page.mjs');
+    t.true(await exists(defaultPath));
+    t.true(await exists(plainPath));
+    t.true(await fileSize(defaultPath) < await fileSize(plainPath));
+    t.false(await exists(path.join(ws, 'out-default/page.min.mjs')));
+    t.false(await exists(path.join(ws, 'out-plain/page.min.mjs')));
+    const plainSource = await readFile(plainPath, 'utf8');
+    t.true(plainSource.includes('export default function(d){'));
+    const mod = await import(pathToFileURL(defaultPath).href);
+    t.true(mod.default({ title: 'min', stamp: 1 }).includes('min'));
+});
+test.serial('extensionless esm template writes name.mjs', async (t) => {
+    const ws = await createWorkspace('template-output');
+    await buildItem(ws, 'extensionless.json', 'lib');
+    const pagePath = path.join(ws, 'out/plain.mjs');
+    t.true(await exists(pagePath));
+    const mod = await import(pathToFileURL(pagePath).href);
+    t.true(mod.default({ title: 'plain', stamp: 1 }).includes('plain'));
+});
+test.serial('html template without variables renders basename with empty data and ignores minify', async (t) => {
+    const ws = await createWorkspace('template-output');
+    await buildItem(ws, 'html.json', 'lib');
+    const pagePath = path.join(ws, 'out/page.html');
+    t.true(await exists(pagePath));
+    t.false(await exists(path.join(ws, 'out/page.min.html')));
+    const html = await readFile(pagePath, 'utf8');
+    t.true(html.includes('<h1></h1>'));
 });

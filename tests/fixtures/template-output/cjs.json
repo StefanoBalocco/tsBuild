@@ -1,0 +1,13 @@
+[
+	{
+		"target": "lib",
+		"tsConfig": "tsconfig.json",
+		"templates": [
+			{
+				"filename": "templates/page.tpl",
+				"destination": "out",
+				"output": "cjs"
+			}
+		]
+	}
+]
