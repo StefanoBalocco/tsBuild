@@ -2,7 +2,7 @@
 	{
 		"target": "lib",
 		"tsConfig": "tsconfig.json",
-		"templates": [
+		"templatesJs": [
 			{
 				"filename": "templates/plain",
 				"destination": "out",

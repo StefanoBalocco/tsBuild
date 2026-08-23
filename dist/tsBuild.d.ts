@@ -18,21 +18,20 @@ type TsMinify = {
     terser?: TsTerser;
     terserCompanion?: boolean;
 };
-type TsTemplateMinify = {
-    terser?: TsTerser;
-    terserCompanion?: boolean;
-};
 type TsVariable = {
     name: string;
     type: 'string' | 'mtime';
     value: string;
 };
-type TsTemplate = {
+type TsHtmlTemplate = {
     filename: string;
     destination: string;
-    output?: 'html' | 'esm' | 'cjs';
     variables?: TsVariable[];
-    minify?: TsTemplateMinify;
+};
+type TsJsTemplate = {
+    filename: string;
+    destination: string;
+    output: 'esm' | 'cjs';
 };
 type TsCopy = {
     destination: string;
@@ -46,7 +45,8 @@ export declare const tsBuildItemSchema: z.ZodType<{
     prefix?: string;
     minify?: TsMinify;
     copy?: TsCopy[];
-    templates?: TsTemplate[];
+    templatesHtml?: TsHtmlTemplate[];
+    templatesJs?: TsJsTemplate[];
 }>;
 export type TsBuildItem = z.infer<typeof tsBuildItemSchema>;
 export default class TsBuild {

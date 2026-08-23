@@ -67,16 +67,6 @@ const tsMinifySchema: z.ZodType<TsMinify> = z.object( {
 	terserCompanion: z.boolean().optional()
 } ).strict();
 
-type TsTemplateMinify = {
-	terser?: TsTerser;
-	terserCompanion?: boolean;
-};
-
-const tsTemplateMinifySchema: z.ZodType<TsTemplateMinify> = z.object( {
-	terser: tsTerserSchema.optional(),
-	terserCompanion: z.boolean().optional()
-} ).strict();
-
 type TsVariable = {
 	name: string;
 	type: 'string' | 'mtime';
@@ -89,20 +79,28 @@ const tsVariableSchema: z.ZodType<TsVariable> = z.object( {
 	value: z.string()
 } ).strict();
 
-type TsTemplate = {
+type TsHtmlTemplate = {
 	filename: string;
 	destination: string;
-	output?: 'html' | 'esm' | 'cjs';
 	variables?: TsVariable[];
-	minify?: TsTemplateMinify;
 };
 
-const tsTemplateSchema: z.ZodType<TsTemplate> = z.object( {
+const tsHtmlTemplateSchema: z.ZodType<TsHtmlTemplate> = z.object( {
 	filename: z.string(),
 	destination: z.string(),
-	output: z.enum( [ 'html', 'esm', 'cjs' ] ).optional(),
-	variables: z.array( tsVariableSchema ).optional(),
-	minify: tsTemplateMinifySchema.optional()
+	variables: z.array( tsVariableSchema ).optional()
+} ).strict();
+
+type TsJsTemplate = {
+	filename: string;
+	destination: string;
+	output: 'esm' | 'cjs';
+};
+
+const tsJsTemplateSchema: z.ZodType<TsJsTemplate> = z.object( {
+	filename: z.string(),
+	destination: z.string(),
+	output: z.enum( [ 'esm', 'cjs' ] )
 } ).strict();
 
 type TsCopy = {
@@ -124,7 +122,8 @@ export const tsBuildItemSchema: z.ZodType<{
 	prefix?: string;
 	minify?: TsMinify;
 	copy?: TsCopy[];
-	templates?: TsTemplate[];
+	templatesHtml?: TsHtmlTemplate[];
+	templatesJs?: TsJsTemplate[];
 }> = z.object( {
 	target: z.string(),
 	tsConfig: z.string(),
@@ -132,7 +131,8 @@ export const tsBuildItemSchema: z.ZodType<{
 	prefix: z.string().optional(),
 	minify: tsMinifySchema.optional(),
 	copy: z.array( tsCopySchema ).optional(),
-	templates: z.array( tsTemplateSchema ).optional()
+	templatesHtml: z.array( tsHtmlTemplateSchema ).optional(),
+	templatesJs: z.array( tsJsTemplateSchema ).optional()
 } ).strict();
 
 export type TsBuildItem = z.infer<typeof tsBuildItemSchema>;
@@ -269,7 +269,7 @@ export default class TsBuild {
 
 	private static _formatIssueLines( issue: z.ZodIssue, parentPath: readonly PropertyKey[] ): string[] {
 		const returnValue: string[] = [];
-		const issuePath: readonly PropertyKey[] = [ ...parentPath, ...issue.path ];
+		const issuePath: readonly ( string | number )[] = [ ...parentPath, ...issue.path ] as readonly ( string | number )[];
 		if( 'invalid_union' === issue.code ) {
 			const branchSpecific: boolean[] = issue.errors.map( ( branchErrors: z.ZodIssue[] ): boolean => branchErrors.some( ( branchIssue: z.ZodIssue ): boolean => ( 'unrecognized_keys' === branchIssue.code ) || ( 0 < branchIssue.path.length ) ) );
 			const hasSpecificBranch: boolean = branchSpecific.includes( true );
@@ -290,19 +290,14 @@ export default class TsBuild {
 				if( 'number' === typeof segment ) {
 					formattedPath += `[${ segment }]`;
 				} else {
-					const segmentName: string = String( segment );
-					if( formattedPath ) {
-						formattedPath += `.${ segmentName }`;
-					} else {
-						formattedPath = segmentName;
-					}
+					formattedPath += `.${ segment }`;
 				}
 			}
 			if( 'unrecognized_keys' === issue.code ) {
 				const cL2: number = issue.keys.length;
 				for( let iL2: number = 0; iL2 < cL2; iL2++ ) {
 					const key: string = issue.keys[ iL2 ];
-					const keyPath: string = formattedPath ? `${ formattedPath }.${ key }` : key;
+					const keyPath: string = `${ formattedPath }.${ key }`;
 					returnValue.push( `${ keyPath }: Unrecognized key: ${ JSON.stringify( key ) }` );
 				}
 			} else {
@@ -376,6 +371,22 @@ export default class TsBuild {
 		ZeptoLogger.instance.log( LogLevel.INFO, `[${ targetLabel }] Compiling TypeScript...` );
 		TsBuild.compile( absConfig );
 
+		if( buildItem.templatesJs ) {
+			const cL1: number = buildItem.templatesJs.length;
+			for( let iL1: number = 0; iL1 < cL1; iL1++ ) {
+				const template: TsJsTemplate = buildItem.templatesJs[ iL1 ];
+				const absTemplate: string = path.resolve( targetDirectory, template.filename );
+				const absDestination: string = path.resolve( this._configDirectory, template.destination );
+				const templateSource: string = await readFile( absTemplate, 'utf8' );
+				const compiled: string = new jTDAL().CompileToString( templateSource );
+				const moduleSource: string = ( 'esm' === template.output ) ? `export default ${ compiled }` : `module.exports = ${ compiled };`;
+				const parsedPath: path.ParsedPath = path.parse( absTemplate );
+				const outputName: string = ( 'esm' === template.output ) ? `${ parsedPath.name }.mjs` : `${ parsedPath.name }.cjs`;
+				await mkdir( absDestination, { recursive: true } );
+				await writeFile( path.resolve( absDestination, outputName ), moduleSource, 'utf8' );
+			}
+		}
+
 		if( minifyPlan && ( minifyPlan.enabled || minifyPlan.useTerserCompanion ) ) {
 			const cL1: number = minifyPlan.files.length;
 			for( let iL1: number = 0; iL1 < cL1; iL1++ ) {
@@ -399,48 +410,29 @@ export default class TsBuild {
 			}
 		}
 
-		if( buildItem.templates ) {
-			const cL1: number = buildItem.templates.length;
+		if( buildItem.templatesHtml ) {
+			const cL1: number = buildItem.templatesHtml.length;
 			for( let iL1: number = 0; iL1 < cL1; iL1++ ) {
-				const template: TsTemplate = buildItem.templates[ iL1 ];
+				const template: TsHtmlTemplate = buildItem.templatesHtml[ iL1 ];
 				const absTemplate: string = path.resolve( targetDirectory, template.filename );
 				const absDestination: string = path.resolve( this._configDirectory, template.destination );
-				const output: 'html' | 'esm' | 'cjs' = template.output ?? 'html';
-				if( 'html' === output ) {
-					const variables: Record<string, string | number> = {};
-					const cL2: number = ( template.variables ?? [] ).length;
-					for( let iL2: number = 0; iL2 < cL2; iL2++ ) {
-						const variable: TsVariable = ( template.variables ?? [] )[ iL2 ];
-						switch( variable.type ) {
-							case 'string': {
-								variables[ variable.name ] = variable.value;
-								break;
-							}
-							case 'mtime': {
-								variables[ variable.name ] = ( await stat( path.resolve( targetDirectory, variable.value ) ) ).mtime.getTime();
-								break;
-							}
+				const variables: Record<string, string | number> = {};
+				const templateVariables: TsVariable[] = template.variables ?? [];
+				const cL2: number = templateVariables.length;
+				for( let iL2: number = 0; iL2 < cL2; iL2++ ) {
+					const variable: TsVariable = templateVariables[ iL2 ];
+					switch( variable.type ) {
+						case 'string': {
+							variables[ variable.name ] = variable.value;
+							break;
+						}
+						case 'mtime': {
+							variables[ variable.name ] = ( await stat( path.resolve( targetDirectory, variable.value ) ) ).mtime.getTime();
+							break;
 						}
 					}
-					await TsBuild.templating( absTemplate, absDestination, variables );
-				} else {
-					const terserResolved: { enabled: boolean; options: TerserOptions } = TsBuild._resolveTerserConfig( template.minify?.terser, 'esm' === output );
-					const useTerserCompanion: boolean = template.minify?.terserCompanion ?? true;
-					const templateSource: string = await readFile( absTemplate, 'utf8' );
-					const compiled: string = new jTDAL().CompileToString( templateSource );
-					const moduleSource: string = ( 'esm' === output ) ? `export default ${ compiled }` : `module.exports = ${ compiled };`;
-					let outputSource: string = moduleSource;
-					if( terserResolved.enabled || useTerserCompanion ) {
-						const minified: string = await TsBuild._minifySource( moduleSource, terserResolved.enabled, useTerserCompanion, terserResolved.options );
-						if( minified ) {
-							outputSource = minified;
-						}
-					}
-					const parsedPath: path.ParsedPath = path.parse( absTemplate );
-					const outputName: string = ( 'esm' === output ) ? `${ parsedPath.name }.mjs` : `${ parsedPath.name }.cjs`;
-					await mkdir( absDestination, { recursive: true } );
-					await writeFile( path.resolve( absDestination, outputName ), outputSource, 'utf8' );
 				}
+				await TsBuild.templating( absTemplate, absDestination, variables );
 			}
 		}
 

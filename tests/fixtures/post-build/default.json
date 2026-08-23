@@ -9,7 +9,7 @@
 				"files": [ "assets/one.txt", "assets/two.txt" ]
 			}
 		],
-		"templates": [
+		"templatesHtml": [
 			{
 				"filename": "templates/page.html",
 				"destination": "out/pages",

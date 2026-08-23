@@ -8,7 +8,7 @@ Build TypeScript targets and minify their JavaScript output.
 - TypeScript API compilation via the TypeScript compiler API (not `tsc` CLI)
 - Optional minification: Terser, TerserCompanion, or both (when both produce results, the smaller is selected; if Terser produces no output, TerserCompanion processes the original source). Terser options are limited to `module`, `toplevel`, and `mangle`
 - Asset copying with optional destination cleanup
-- jTDAL template rendering: HTML pages with string and file-mtime variables, or self-contained ESM/CJS renderer modules
+- jTDAL template rendering: HTML pages with string and file-mtime variables, and self-contained ESM/CJS renderer modules (minified by the build-level `minify` stage when their generated paths are listed there)
 - Strict config validation: unknown keys and malformed values fail the CLI run before any build step
 - `all` target runs every configured target in declaration order
 - `-f` flag for custom config path
@@ -33,6 +33,13 @@ Create a `tsBuild.json` file (or any JSON file) with an array of target objects:
 		"tsConfig": "tsconfig.json",
 		"name": "MyLib",
 		"prefix": "packages/lib",
+		"templatesJs": [
+			{
+				"filename": "src/renderer.tpl",
+				"destination": "out/modules",
+				"output": "esm"
+			}
+		],
 		"minify": {
 			"files": [ "dist/index.js" ],
 			"terser": {
@@ -49,7 +56,7 @@ Create a `tsBuild.json` file (or any JSON file) with an array of target objects:
 				"files": [ "assets/icons/logo.svg", "assets/config.json" ]
 			}
 		],
-		"templates": [
+		"templatesHtml": [
 			{
 				"filename": "src/page.html",
 				"destination": "out/pages",
@@ -57,11 +64,6 @@ Create a `tsBuild.json` file (or any JSON file) with an array of target objects:
 					{ "name": "title", "type": "string", "value": "My App" },
 					{ "name": "stamp", "type": "mtime", "value": "src/data.json" }
 				]
-			},
-			{
-				"filename": "src/renderer.tpl",
-				"destination": "out/modules",
-				"output": "esm"
 			}
 		]
 	}
@@ -78,9 +80,10 @@ Create a `tsBuild.json` file (or any JSON file) with an array of target objects:
 | `minify.terser` | `boolean` or object | `true` when `minify` exists | Enable Terser. Boolean form controls only `enabled`. Object form: `enabled`, `module`, `toplevel`, `mangle` (see below) |
 | `minify.terserCompanion` | `boolean` | `true` when `minify` exists | Enable TerserCompanion optimization |
 | `copy` | `object[]` | — | Asset copy operations. Each entry: `destination` (config-root directory), `files` (prefix-relative source file paths — individual files only, each copied to `destination/path.basename(file)`), `clean` (boolean, default false — when true, recreates destination before copy) |
-| `templates` | `object[]` | — | jTDAL template rendering. Each entry: `filename` (prefix-relative source), `destination` (config-root directory), `output` (`"html"` default, or `"esm"`/`"cjs"`), `variables` (optional; array of `{ name, type: "string" | "mtime", value }`), `minify` (optional; `terser` and `terserCompanion` as in build `minify`, without `files`) |
+| `templatesHtml` | `object[]` | — | jTDAL HTML template rendering. Each entry: `filename` (prefix-relative source), `destination` (config-root directory), `variables` (optional; array of `{ name, type: "string" | "mtime", value }`) |
+| `templatesJs` | `object[]` | — | jTDAL renderer module generation. Each entry: `filename` (prefix-relative source), `destination` (config-root directory), `output` (`"esm"` or `"cjs"`, required). Modules are written unminified; list their generated `.mjs`/`.cjs` paths under `minify.files` to produce `.min.mjs`/`.min.cjs` siblings |
 
-Copy and template operations run after compile and minify, before the final build log.
+Per-target operation order: Compile TypeScript → Render templatesJs → Minify → Copy files → Render templatesHtml → `✓ Built.` log.
 
 **Resolution rules:**
 - Template `filename`, `mtime` variable `value` file, and `copy.files` resolve from the target directory (config directory + `prefix`).
@@ -105,14 +108,12 @@ Module context for the `module` default:
 | Context | `module` default |
 |---------|------------------|
 | Build-level `minify` | `true` |
-| Template `output: "esm"` | `true` |
-| Template `output: "cjs"` | `false` |
 
-`module: true` makes Terser optimize top-level declarations as if `toplevel` were `true`. `toplevel` matters only for CommonJS/script input, where top-level declarations are preserved unless you opt in.
+`module: true` makes Terser optimize top-level declarations as if `toplevel` were `true`. `toplevel` matters only for CommonJS/script input, where top-level declarations are preserved unless you opt in. The build-level `minify` applies the same defaults to every listed file, so a CJS entry listed there needs an explicit compatible Terser configuration such as `module: false` when appropriate.
 
 ### Template module output
 
-With `output: "esm"` or `"cjs"`, tsBuild compiles the template to a self-contained renderer function and writes it as `filename.mjs` or `filename.cjs` (source basename with the last extension replaced; an extensionless source gains the new one). The renderer takes the runtime data as its single argument and returns the rendered HTML. `variables` and `mtime` are not resolved in this mode — pass the data at call time:
+With `templatesJs`, tsBuild compiles the template to a self-contained renderer function and writes it as `filename.mjs` or `filename.cjs` (source basename with the last extension replaced; an extensionless source gains the new one). The renderer takes the runtime data as its single argument and returns the rendered HTML. `variables` and `mtime` are not resolved in this mode — pass the data at call time:
 
 ```js
 // esm
@@ -124,7 +125,7 @@ const render = require( './dist/legacy/renderer.cjs' );
 const html = render( { title: 'My App' } );
 ```
 
-The wrapped module is minified in memory when minification is enabled — `terser` and `terserCompanion` default to `true` for JS templates, even when `minify` is absent. The minified text replaces the module in place; no `.min.mjs` or `.min.cjs` sibling is written. HTML output (`output: "html"`, the default) keeps the existing behavior: basename filename, resolved `variables` (empty when omitted), and any `minify` field is ignored.
+JS template modules are written unminified; there is no per-template minification. To minify a generated module, list its `.mjs` or `.cjs` path under the build-level `minify.files`; the global `minify` stage then writes a `.min.mjs` or `.min.cjs` sibling. When a `prefix` is set, `minify.files` stays relative to the target directory (config directory + `prefix`) while the templatesJs `destination` resolves from the config root, so an entry targeting a generated module outside the prefix needs `..` segments. HTML output (`templatesHtml`) keeps the existing behavior: basename filename, resolved `variables` (empty when omitted).
 
 ### Config validation
 
@@ -133,12 +134,10 @@ The config file is validated against a strict Zod schema before any build step. 
 ```
 Invalid tsBuild configuration:
 [0].minify.terser.enabledd: Unrecognized key: "enabledd"
-[1].templates[0].minify.terser.mangle: Invalid regular expression
+[1].templatesJs[0].output: Invalid option: expected one of "esm"|"cjs"
 ```
 
 Malformed JSON is reported the same way: the logged error message includes `Invalid tsBuild configuration:` (followed by the parser message), and the CLI returns exit code 1.
-
-**Per-target operation order:** Compile TypeScript → Minify → Copy files → Render templates → `✓ Built.` log.
 
 ## CLI
 
@@ -178,19 +177,19 @@ type TsBuildItem = {
 		terser?: boolean | TerserConfig;
 		terserCompanion?: boolean;
 	};
-	templates?: {
+	templatesHtml?: {
 		filename: string;
 		destination: string;
-		output?: 'html' | 'esm' | 'cjs';
 		variables?: {
 			name: string;
 			type: 'string' | 'mtime';
 			value: string;
 		}[];
-		minify?: {
-			terser?: boolean | TerserConfig;
-			terserCompanion?: boolean;
-		};
+	}[];
+	templatesJs?: {
+		filename: string;
+		destination: string;
+		output: 'esm' | 'cjs';
 	}[];
 	copy?: {
 		destination: string;
@@ -236,7 +235,7 @@ Render a jTDAL template file and write the output to the destination directory. 
 
 ### `builder.build( buildItem: TsBuildItem ): Promise<void>`
 
-Build a single item: compile TypeScript, optionally minify files, then run copy and template operations. This is the sole instance build method.
+Build a single item: compile TypeScript, generate js-template modules, optionally minify files, then run copy and html-template operations. This is the sole instance build method.
 
 ### `TsBuild.runCli( argumentsInput: string[] ): Promise<number>`
 

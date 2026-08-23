@@ -145,6 +145,18 @@ test.serial('minify on .mjs writes sibling .min.mjs and leaves original unchange
     const originalContent = await readFile(sourcePath, 'utf8');
     t.is(originalContent, 'export const version = "1.0.0";\n');
 });
+test.serial('minify defaults partial terser options to module mode', async (t) => {
+    const ws = await createWorkspace('minify');
+    const sourcePath = path.join(ws, 'dist/lib.mjs');
+    const minPath = path.join(ws, 'dist/lib.min.mjs');
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(sourcePath, 'const unused = "unused";\nexport const version = "1.0.0";\n');
+    const result = await TsBuild.minify(sourcePath, true, false, {});
+    t.true(result);
+    t.true(await exists(minPath));
+    const minifiedSource = await readFile(minPath, 'utf8');
+    t.false(minifiedSource.includes('unused'));
+});
 test.serial('minify on .cjs writes sibling .min.cjs and leaves original unchanged', async (t) => {
     const ws = await createWorkspace('minify');
     const sourcePath = path.join(ws, 'dist/lib.cjs');
@@ -194,7 +206,7 @@ test.serial('minify with both transforms on comments-only source lets TerserComp
     t.is(await readFile(minPath, 'utf8'), '// just a comment\n/* another one */\n');
     t.is(await readFile(sourcePath, 'utf8'), '// just a comment\n/* another one */\n');
 });
-test.serial('default copy and templates resolve prefix sources and config-root destinations', async (t) => {
+test.serial('default copy and templatesHtml resolve prefix sources and config-root destinations', async (t) => {
     const workspace = await createWorkspace('post-build');
     await mkdir(path.join(workspace, 'out/assets'), { recursive: true });
     await writeFile(path.join(workspace, 'out/assets/stale.txt'), 'stale');
@@ -359,20 +371,35 @@ test.serial('runCli rejects configs with invalid mangle regex text', async (t) =
     t.true(result.output.includes('[0].minify.terser.mangle'));
     t.true(result.output.includes('Invalid regular expression'));
 });
-test.serial('runCli rejects invalid template output enum', async (t) => {
+test.serial('runCli rejects invalid js-template output enum', async (t) => {
     const ws = await createWorkspace('minimal');
     await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
         {
             target: 'lib',
             tsConfig: 'tsconfig.json',
-            templates: [
+            templatesJs: [
                 { filename: 'page.tpl', destination: 'out', output: 'umd' }
             ]
         }
     ]));
     const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
     t.is(result.exitCode, 1);
-    t.true(result.output.includes('[0].templates[0].output'));
+    t.true(result.output.includes('[0].templatesJs[0].output'));
+});
+test.serial('runCli rejects js-template missing required output', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            templatesJs: [
+                { filename: 'page.tpl', destination: 'out' }
+            ]
+        }
+    ]));
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    t.is(result.exitCode, 1);
+    t.true(result.output.includes('[0].templatesJs[0].output'));
 });
 const strictSchemaCases = [
     {
@@ -386,14 +413,14 @@ const strictSchemaCases = [
         expectedLine: '[0].minify.unknownMinifyField: Unrecognized key: "unknownMinifyField"'
     },
     {
-        name: 'template',
-        config: { target: 'lib', tsConfig: 'tsconfig.json', templates: [{ filename: 'a.tpl', destination: 'out', unknownTemplateField: true }] },
-        expectedLine: '[0].templates[0].unknownTemplateField: Unrecognized key: "unknownTemplateField"'
+        name: 'html template',
+        config: { target: 'lib', tsConfig: 'tsconfig.json', templatesHtml: [{ filename: 'a.tpl', destination: 'out', unknownTemplateField: true }] },
+        expectedLine: '[0].templatesHtml[0].unknownTemplateField: Unrecognized key: "unknownTemplateField"'
     },
     {
         name: 'variable',
-        config: { target: 'lib', tsConfig: 'tsconfig.json', templates: [{ filename: 'a.tpl', destination: 'out', variables: [{ name: 'x', type: 'string', value: 'y', unknownVariableField: true }] }] },
-        expectedLine: '[0].templates[0].variables[0].unknownVariableField: Unrecognized key: "unknownVariableField"'
+        config: { target: 'lib', tsConfig: 'tsconfig.json', templatesHtml: [{ filename: 'a.tpl', destination: 'out', variables: [{ name: 'x', type: 'string', value: 'y', unknownVariableField: true }] }] },
+        expectedLine: '[0].templatesHtml[0].variables[0].unknownVariableField: Unrecognized key: "unknownVariableField"'
     },
     {
         name: 'copy',
@@ -412,6 +439,76 @@ for (strictSchemaCase of strictSchemaCases) {
         t.true(outputLines.includes(strictSchemaCase.expectedLine));
     });
 }
+test.serial('runCli rejects legacy templates key as unrecognized', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            templates: [{ filename: 'a.tpl', destination: 'out' }]
+        }
+    ]));
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    const outputLines = result.output.split('\n');
+    t.is(result.exitCode, 1);
+    t.true(outputLines.includes('[0].templates: Unrecognized key: "templates"'));
+});
+test.serial('runCli rejects minify inside a templatesJs entry', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            templatesJs: [{ filename: 'a.tpl', destination: 'out', output: 'esm', minify: { terser: true } }]
+        }
+    ]));
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    const outputLines = result.output.split('\n');
+    t.is(result.exitCode, 1);
+    t.true(outputLines.includes('[0].templatesJs[0].minify: Unrecognized key: "minify"'));
+});
+test.serial('runCli rejects variables inside a templatesJs entry', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            templatesJs: [{ filename: 'a.tpl', destination: 'out', output: 'esm', variables: [{ name: 'x', type: 'string', value: 'y' }] }]
+        }
+    ]));
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    const outputLines = result.output.split('\n');
+    t.is(result.exitCode, 1);
+    t.true(outputLines.includes('[0].templatesJs[0].variables: Unrecognized key: "variables"'));
+});
+test.serial('runCli rejects output inside an templatesHtml entry', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            templatesHtml: [{ filename: 'a.tpl', destination: 'out', output: 'esm' }]
+        }
+    ]));
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    const outputLines = result.output.split('\n');
+    t.is(result.exitCode, 1);
+    t.true(outputLines.includes('[0].templatesHtml[0].output: Unrecognized key: "output"'));
+});
+test.serial('runCli rejects minify inside an templatesHtml entry', async (t) => {
+    const ws = await createWorkspace('minimal');
+    await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            templatesHtml: [{ filename: 'a.tpl', destination: 'out', minify: { terser: true } }]
+        }
+    ]));
+    const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
+    const outputLines = result.output.split('\n');
+    t.is(result.exitCode, 1);
+    t.true(outputLines.includes('[0].templatesHtml[0].minify: Unrecognized key: "minify"'));
+});
 test.serial('runCli reports root config type mismatch as root diagnostic', async (t) => {
     const ws = await createWorkspace('minimal');
     await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify({ target: 'lib', tsConfig: 'tsconfig.json' }));
@@ -556,7 +653,7 @@ test.serial('minify toplevel true drops unused top-level declarations retained b
     const dropped = await readFile(minPath, 'utf8');
     t.false(dropped.includes('unusedHelper'));
 });
-test.serial('esm template output writes .mjs, ignores variables, and renders from runtime data', async (t) => {
+test.serial('esm js-template writes .mjs and renders from runtime data', async (t) => {
     const ws = await createWorkspace('template-output');
     await buildItem(ws, 'esm.json', 'lib');
     const pagePath = path.join(ws, 'out/page.mjs');
@@ -568,7 +665,7 @@ test.serial('esm template output writes .mjs, ignores variables, and renders fro
     t.true(html.includes('ESM title'));
     t.true(html.includes('42'));
 });
-test.serial('cjs template output writes .cjs, omits variables, and renders from runtime data', async (t) => {
+test.serial('cjs js-template writes .cjs and renders from runtime data', async (t) => {
     const ws = await createWorkspace('template-output');
     await buildItem(ws, 'cjs.json', 'lib');
     const pagePath = path.join(ws, 'out/page.cjs');
@@ -580,22 +677,18 @@ test.serial('cjs template output writes .cjs, omits variables, and renders from 
     t.true(html.includes('CJS title'));
     t.true(html.includes('7'));
 });
-test.serial('esm template minification defaults are smaller and executable, opt-out keeps source', async (t) => {
+test.serial('templatesJs generate modules before global minify', async (t) => {
     const ws = await createWorkspace('template-output');
-    await buildItem(ws, 'compare.json', 'lib');
-    const defaultPath = path.join(ws, 'out-default/page.mjs');
-    const plainPath = path.join(ws, 'out-plain/page.mjs');
-    t.true(await exists(defaultPath));
-    t.true(await exists(plainPath));
-    t.true(await fileSize(defaultPath) < await fileSize(plainPath));
-    t.false(await exists(path.join(ws, 'out-default/page.min.mjs')));
-    t.false(await exists(path.join(ws, 'out-plain/page.min.mjs')));
-    const plainSource = await readFile(plainPath, 'utf8');
-    t.true(plainSource.includes('export default function(d){'));
-    const mod = await import(pathToFileURL(defaultPath).href);
-    t.true(mod.default({ title: 'min', stamp: 1 }).includes('min'));
+    await buildItem(ws, 'minify.json', 'lib');
+    const pagePath = path.join(ws, 'out/page.mjs');
+    const minPath = path.join(ws, 'out/page.min.mjs');
+    t.true(await exists(pagePath));
+    t.true(await exists(minPath));
+    const mod = await import(pathToFileURL(minPath).href);
+    const html = mod.default({ title: 'minified', stamp: 1 });
+    t.true(html.includes('minified'));
 });
-test.serial('extensionless esm template writes name.mjs', async (t) => {
+test.serial('extensionless esm js-template writes name.mjs', async (t) => {
     const ws = await createWorkspace('template-output');
     await buildItem(ws, 'extensionless.json', 'lib');
     const pagePath = path.join(ws, 'out/plain.mjs');
@@ -603,7 +696,7 @@ test.serial('extensionless esm template writes name.mjs', async (t) => {
     const mod = await import(pathToFileURL(pagePath).href);
     t.true(mod.default({ title: 'plain', stamp: 1 }).includes('plain'));
 });
-test.serial('html template without variables renders basename with empty data and ignores minify', async (t) => {
+test.serial('html template without variables renders basename with empty data', async (t) => {
     const ws = await createWorkspace('template-output');
     await buildItem(ws, 'html.json', 'lib');
     const pagePath = path.join(ws, 'out/page.html');

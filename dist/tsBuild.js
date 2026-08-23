@@ -37,21 +37,20 @@ const tsMinifySchema = z.object({
     terser: tsTerserSchema.optional(),
     terserCompanion: z.boolean().optional()
 }).strict();
-const tsTemplateMinifySchema = z.object({
-    terser: tsTerserSchema.optional(),
-    terserCompanion: z.boolean().optional()
-}).strict();
 const tsVariableSchema = z.object({
     name: z.string(),
     type: z.enum(['string', 'mtime']),
     value: z.string()
 }).strict();
-const tsTemplateSchema = z.object({
+const tsHtmlTemplateSchema = z.object({
     filename: z.string(),
     destination: z.string(),
-    output: z.enum(['html', 'esm', 'cjs']).optional(),
-    variables: z.array(tsVariableSchema).optional(),
-    minify: tsTemplateMinifySchema.optional()
+    variables: z.array(tsVariableSchema).optional()
+}).strict();
+const tsJsTemplateSchema = z.object({
+    filename: z.string(),
+    destination: z.string(),
+    output: z.enum(['esm', 'cjs'])
 }).strict();
 const tsCopySchema = z.object({
     destination: z.string(),
@@ -65,7 +64,8 @@ export const tsBuildItemSchema = z.object({
     prefix: z.string().optional(),
     minify: tsMinifySchema.optional(),
     copy: z.array(tsCopySchema).optional(),
-    templates: z.array(tsTemplateSchema).optional()
+    templatesHtml: z.array(tsHtmlTemplateSchema).optional(),
+    templatesJs: z.array(tsJsTemplateSchema).optional()
 }).strict();
 const tsBuildConfigSchema = z.array(tsBuildItemSchema).superRefine((items, ctx) => {
     const seenTargets = new Set();
@@ -193,20 +193,14 @@ export default class TsBuild {
                     formattedPath += `[${segment}]`;
                 }
                 else {
-                    const segmentName = String(segment);
-                    if (formattedPath) {
-                        formattedPath += `.${segmentName}`;
-                    }
-                    else {
-                        formattedPath = segmentName;
-                    }
+                    formattedPath += `.${segment}`;
                 }
             }
             if ('unrecognized_keys' === issue.code) {
                 const cL2 = issue.keys.length;
                 for (let iL2 = 0; iL2 < cL2; iL2++) {
                     const key = issue.keys[iL2];
-                    const keyPath = formattedPath ? `${formattedPath}.${key}` : key;
+                    const keyPath = `${formattedPath}.${key}`;
                     returnValue.push(`${keyPath}: Unrecognized key: ${JSON.stringify(key)}`);
                 }
             }
@@ -273,6 +267,21 @@ export default class TsBuild {
         }
         ZeptoLogger.instance.log(LogLevel.INFO, `[${targetLabel}] Compiling TypeScript...`);
         TsBuild.compile(absConfig);
+        if (buildItem.templatesJs) {
+            const cL1 = buildItem.templatesJs.length;
+            for (let iL1 = 0; iL1 < cL1; iL1++) {
+                const template = buildItem.templatesJs[iL1];
+                const absTemplate = path.resolve(targetDirectory, template.filename);
+                const absDestination = path.resolve(this._configDirectory, template.destination);
+                const templateSource = await readFile(absTemplate, 'utf8');
+                const compiled = new jTDAL().CompileToString(templateSource);
+                const moduleSource = ('esm' === template.output) ? `export default ${compiled}` : `module.exports = ${compiled};`;
+                const parsedPath = path.parse(absTemplate);
+                const outputName = ('esm' === template.output) ? `${parsedPath.name}.mjs` : `${parsedPath.name}.cjs`;
+                await mkdir(absDestination, { recursive: true });
+                await writeFile(path.resolve(absDestination, outputName), moduleSource, 'utf8');
+            }
+        }
         if (minifyPlan && (minifyPlan.enabled || minifyPlan.useTerserCompanion)) {
             const cL1 = minifyPlan.files.length;
             for (let iL1 = 0; iL1 < cL1; iL1++) {
@@ -294,49 +303,29 @@ export default class TsBuild {
                 await TsBuild.copy(absDestination, absFiles, copy.clean ?? false);
             }
         }
-        if (buildItem.templates) {
-            const cL1 = buildItem.templates.length;
+        if (buildItem.templatesHtml) {
+            const cL1 = buildItem.templatesHtml.length;
             for (let iL1 = 0; iL1 < cL1; iL1++) {
-                const template = buildItem.templates[iL1];
+                const template = buildItem.templatesHtml[iL1];
                 const absTemplate = path.resolve(targetDirectory, template.filename);
                 const absDestination = path.resolve(this._configDirectory, template.destination);
-                const output = template.output ?? 'html';
-                if ('html' === output) {
-                    const variables = {};
-                    const cL2 = (template.variables ?? []).length;
-                    for (let iL2 = 0; iL2 < cL2; iL2++) {
-                        const variable = (template.variables ?? [])[iL2];
-                        switch (variable.type) {
-                            case 'string': {
-                                variables[variable.name] = variable.value;
-                                break;
-                            }
-                            case 'mtime': {
-                                variables[variable.name] = (await stat(path.resolve(targetDirectory, variable.value))).mtime.getTime();
-                                break;
-                            }
+                const variables = {};
+                const templateVariables = template.variables ?? [];
+                const cL2 = templateVariables.length;
+                for (let iL2 = 0; iL2 < cL2; iL2++) {
+                    const variable = templateVariables[iL2];
+                    switch (variable.type) {
+                        case 'string': {
+                            variables[variable.name] = variable.value;
+                            break;
+                        }
+                        case 'mtime': {
+                            variables[variable.name] = (await stat(path.resolve(targetDirectory, variable.value))).mtime.getTime();
+                            break;
                         }
                     }
-                    await TsBuild.templating(absTemplate, absDestination, variables);
                 }
-                else {
-                    const terserResolved = TsBuild._resolveTerserConfig(template.minify?.terser, 'esm' === output);
-                    const useTerserCompanion = template.minify?.terserCompanion ?? true;
-                    const templateSource = await readFile(absTemplate, 'utf8');
-                    const compiled = new jTDAL().CompileToString(templateSource);
-                    const moduleSource = ('esm' === output) ? `export default ${compiled}` : `module.exports = ${compiled};`;
-                    let outputSource = moduleSource;
-                    if (terserResolved.enabled || useTerserCompanion) {
-                        const minified = await TsBuild._minifySource(moduleSource, terserResolved.enabled, useTerserCompanion, terserResolved.options);
-                        if (minified) {
-                            outputSource = minified;
-                        }
-                    }
-                    const parsedPath = path.parse(absTemplate);
-                    const outputName = ('esm' === output) ? `${parsedPath.name}.mjs` : `${parsedPath.name}.cjs`;
-                    await mkdir(absDestination, { recursive: true });
-                    await writeFile(path.resolve(absDestination, outputName), outputSource, 'utf8');
-                }
+                await TsBuild.templating(absTemplate, absDestination, variables);
             }
         }
         ZeptoLogger.instance.log(LogLevel.INFO, `[${targetLabel}] ✓ Built.`);

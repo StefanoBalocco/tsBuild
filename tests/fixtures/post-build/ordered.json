@@ -10,7 +10,7 @@
 				"clean": true
 			}
 		],
-		"templates": [
+		"templatesHtml": [
 			{
 				"filename": "templates/page.html",
 				"destination": "ordered",

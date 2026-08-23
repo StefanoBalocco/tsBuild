@@ -8,6 +8,11 @@
 				"destination": "out",
 				"output": "esm"
 			}
-		]
+		],
+		"minify": {
+			"files": [ "out/page.mjs" ],
+			"terser": true,
+			"terserCompanion": false
+		}
 	}
 ]

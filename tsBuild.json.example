@@ -18,9 +18,25 @@
 		"prefix": "frontend",
 		"tsConfig": "tsconfig.json",
 		"name": "Frontend",
+		"templatesJs": [
+			{
+				"filename": "templates/renderer.tpl",
+				"destination": "dist/modules",
+				"output": "esm"
+			},
+			{
+				"filename": "templates/legacy.tpl",
+				"destination": "dist/legacy",
+				"output": "cjs"
+			}
+		],
 		"minify": {
-			"files": [ "dist/app.js" ],
-			"terser": true,
+			"files": [ "dist/app.js", "../dist/modules/renderer.mjs" ],
+			"terser": {
+				"enabled": true,
+				"module": true,
+				"mangle": "^_"
+			},
 			"terserCompanion": true
 		},
 		"copy": [
@@ -31,7 +47,7 @@
 				]
 			}
 		],
-		"templates": [
+		"templatesHtml": [
 			{
 				"filename": "templates/index.html",
 				"destination": "dist/public",
@@ -47,16 +63,6 @@
 						"value": "dist/app.min.js"
 					}
 				]
-			},
-			{
-				"filename": "templates/renderer.tpl",
-				"destination": "dist/modules",
-				"output": "esm"
-			},
-			{
-				"filename": "templates/legacy.tpl",
-				"destination": "dist/legacy",
-				"output": "cjs"
 			}
 		]
 	},
