@@ -188,12 +188,11 @@ export default class TsBuild {
                     formattedPath += `[${segment}]`;
                 }
                 else {
-                    const segmentName = String(segment);
                     if (formattedPath) {
-                        formattedPath += `.${segmentName}`;
+                        formattedPath += `.${segment}`;
                     }
                     else {
-                        formattedPath = segmentName;
+                        formattedPath = segment;
                     }
                 }
             }

@@ -523,11 +523,6 @@ const strictSchemaCases: { name: string; config: Record<PropertyKey, unknown>; e
 		expectedLine: '[0].templates[0].unknownTemplateField: Unrecognized key: "unknownTemplateField"'
 	},
 	{
-		name: 'template minify',
-		config: { target: 'lib', tsConfig: 'tsconfig.json', templates: [ { filename: 'a.tpl', destination: 'out', minify: { terser: true } } ] },
-		expectedLine: '[0].templates[0].minify: Unrecognized key: "minify"'
-	},
-	{
 		name: 'variable',
 		config: { target: 'lib', tsConfig: 'tsconfig.json', templates: [ { filename: 'a.tpl', destination: 'out', variables: [ { name: 'x', type: 'string', value: 'y', unknownVariableField: true } ] } ] },
 		expectedLine: '[0].templates[0].variables[0].unknownVariableField: Unrecognized key: "unknownVariableField"'
@@ -553,6 +548,33 @@ for( let iL1: number = 0; iL1 < cL1; iL1++ ) {
 		t.true( outputLines.includes( strictSchemaCase.expectedLine ) );
 	} );
 }
+
+test.serial( 'formatIssueLines renders a string-first path segment', ( t: ExecutionContext ): void => {
+	const formatted: string[] = ( TsBuild as unknown as {
+		_formatIssueLines: ( issue: unknown, parentPath: readonly PropertyKey[] ) => string[];
+	} )._formatIssueLines( { code: 'custom', path: [ 'alpha', 1, 'beta' ], message: 'boom' }, [] );
+
+	t.deepEqual( formatted, [ 'alpha[1].beta: boom' ] );
+} );
+
+test.serial( 'runCli rejects unknown minify key in template object', async ( t: ExecutionContext ): Promise<void> => {
+	const ws: string = await createWorkspace( 'minimal' );
+	await writeFile( path.join( ws, 'tsBuild.json' ), JSON.stringify( [
+		{
+			target: 'lib',
+			tsConfig: 'tsconfig.json',
+			templates: [
+				{ filename: 'a.tpl', destination: 'out', minify: { terser: true } }
+			]
+		}
+	] ) );
+
+	const result: { exitCode: number; output: string } = await runCliWithCapturedLog( [ '-f', path.join( ws, 'tsBuild.json' ), 'lib' ] );
+	const outputLines: string[] = result.output.split( '\n' );
+
+	t.is( result.exitCode, 1 );
+	t.true( outputLines.includes( '[0].templates[0].minify: Unrecognized key: "minify"' ) );
+} );
 
 test.serial( 'runCli reports root config type mismatch as root diagnostic', async ( t: ExecutionContext ): Promise<void> => {
 	const ws: string = await createWorkspace( 'minimal' );

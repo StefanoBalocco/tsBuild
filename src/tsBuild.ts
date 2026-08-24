@@ -257,7 +257,7 @@ export default class TsBuild {
 
 	private static _formatIssueLines( issue: z.ZodIssue, parentPath: readonly PropertyKey[] ): string[] {
 		const returnValue: string[] = [];
-		const issuePath: readonly PropertyKey[] = [ ...parentPath, ...issue.path ];
+		const issuePath: readonly ( string | number )[] = [ ...parentPath, ...issue.path ] as readonly ( string | number )[];
 		if( 'invalid_union' === issue.code ) {
 			const branchSpecific: boolean[] = issue.errors.map( ( branchErrors: z.ZodIssue[] ): boolean => branchErrors.some( ( branchIssue: z.ZodIssue ): boolean => ( 'unrecognized_keys' === branchIssue.code ) || ( 0 < branchIssue.path.length ) ) );
 			const hasSpecificBranch: boolean = branchSpecific.includes( true );
@@ -274,15 +274,14 @@ export default class TsBuild {
 			let formattedPath: string = '';
 			const cL1: number = issuePath.length;
 			for( let iL1: number = 0; iL1 < cL1; iL1++ ) {
-				const segment: PropertyKey = issuePath[ iL1 ];
+				const segment: string | number = issuePath[ iL1 ];
 				if( 'number' === typeof segment ) {
 					formattedPath += `[${ segment }]`;
 				} else {
-					const segmentName: string = String( segment );
 					if( formattedPath ) {
-						formattedPath += `.${ segmentName }`;
+						formattedPath += `.${ segment }`;
 					} else {
-						formattedPath = segmentName;
+						formattedPath = segment;
 					}
 				}
 			}
