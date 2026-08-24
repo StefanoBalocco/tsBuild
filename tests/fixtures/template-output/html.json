@@ -5,10 +5,7 @@
 		"templates": [
 			{
 				"filename": "templates/page.html",
-				"destination": "out",
-				"minify": {
-					"terser": { "enabled": true }
-				}
+				"destination": "out"
 			}
 		]
 	}

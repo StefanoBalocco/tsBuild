@@ -18,10 +18,6 @@ type TsMinify = {
     terser?: TsTerser;
     terserCompanion?: boolean;
 };
-type TsTemplateMinify = {
-    terser?: TsTerser;
-    terserCompanion?: boolean;
-};
 type TsVariable = {
     name: string;
     type: 'string' | 'mtime';
@@ -32,7 +28,6 @@ type TsTemplate = {
     destination: string;
     output?: 'html' | 'esm' | 'cjs';
     variables?: TsVariable[];
-    minify?: TsTemplateMinify;
 };
 type TsCopy = {
     destination: string;

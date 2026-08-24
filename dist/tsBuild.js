@@ -37,10 +37,6 @@ const tsMinifySchema = z.object({
     terser: tsTerserSchema.optional(),
     terserCompanion: z.boolean().optional()
 }).strict();
-const tsTemplateMinifySchema = z.object({
-    terser: tsTerserSchema.optional(),
-    terserCompanion: z.boolean().optional()
-}).strict();
 const tsVariableSchema = z.object({
     name: z.string(),
     type: z.enum(['string', 'mtime']),
@@ -50,8 +46,7 @@ const tsTemplateSchema = z.object({
     filename: z.string(),
     destination: z.string(),
     output: z.enum(['html', 'esm', 'cjs']).optional(),
-    variables: z.array(tsVariableSchema).optional(),
-    minify: tsTemplateMinifySchema.optional()
+    variables: z.array(tsVariableSchema).optional()
 }).strict();
 const tsCopySchema = z.object({
     destination: z.string(),
@@ -320,22 +315,13 @@ export default class TsBuild {
                     await TsBuild.templating(absTemplate, absDestination, variables);
                 }
                 else {
-                    const terserResolved = TsBuild._resolveTerserConfig(template.minify?.terser, 'esm' === output);
-                    const useTerserCompanion = template.minify?.terserCompanion ?? true;
                     const templateSource = await readFile(absTemplate, 'utf8');
                     const compiled = new jTDAL().CompileToString(templateSource);
                     const moduleSource = ('esm' === output) ? `export default ${compiled}` : `module.exports = ${compiled};`;
-                    let outputSource = moduleSource;
-                    if (terserResolved.enabled || useTerserCompanion) {
-                        const minified = await TsBuild._minifySource(moduleSource, terserResolved.enabled, useTerserCompanion, terserResolved.options);
-                        if (minified) {
-                            outputSource = minified;
-                        }
-                    }
                     const parsedPath = path.parse(absTemplate);
                     const outputName = ('esm' === output) ? `${parsedPath.name}.mjs` : `${parsedPath.name}.cjs`;
                     await mkdir(absDestination, { recursive: true });
-                    await writeFile(path.resolve(absDestination, outputName), outputSource, 'utf8');
+                    await writeFile(path.resolve(absDestination, outputName), moduleSource, 'utf8');
                 }
             }
         }

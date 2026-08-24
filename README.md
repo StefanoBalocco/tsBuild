@@ -78,7 +78,7 @@ Create a `tsBuild.json` file (or any JSON file) with an array of target objects:
 | `minify.terser` | `boolean` or object | `true` when `minify` exists | Enable Terser. Boolean form controls only `enabled`. Object form: `enabled`, `module`, `toplevel`, `mangle` (see below) |
 | `minify.terserCompanion` | `boolean` | `true` when `minify` exists | Enable TerserCompanion optimization |
 | `copy` | `object[]` | — | Asset copy operations. Each entry: `destination` (config-root directory), `files` (prefix-relative source file paths — individual files only, each copied to `destination/path.basename(file)`), `clean` (boolean, default false — when true, recreates destination before copy) |
-| `templates` | `object[]` | — | jTDAL template rendering. Each entry: `filename` (prefix-relative source), `destination` (config-root directory), `output` (`"html"` default, or `"esm"`/`"cjs"`), `variables` (optional; array of `{ name, type: "string" | "mtime", value }`), `minify` (optional; `terser` and `terserCompanion` as in build `minify`, without `files`) |
+| `templates` | `object[]` | — | jTDAL template rendering. Each entry: `filename` (prefix-relative source), `destination` (config-root directory), `output` (`"html"` default, or `"esm"`/`"cjs"`), `variables` (optional; array of `{ name, type: "string" | "mtime", value }`) |
 
 Copy and template operations run after compile and minify, before the final build log.
 
@@ -105,8 +105,6 @@ Module context for the `module` default:
 | Context | `module` default |
 |---------|------------------|
 | Build-level `minify` | `true` |
-| Template `output: "esm"` | `true` |
-| Template `output: "cjs"` | `false` |
 
 `module: true` makes Terser optimize top-level declarations as if `toplevel` were `true`. `toplevel` matters only for CommonJS/script input, where top-level declarations are preserved unless you opt in.
 
@@ -124,7 +122,7 @@ const render = require( './dist/legacy/renderer.cjs' );
 const html = render( { title: 'My App' } );
 ```
 
-The wrapped module is minified in memory when minification is enabled — `terser` and `terserCompanion` default to `true` for JS templates, even when `minify` is absent. The minified text replaces the module in place; no `.min.mjs` or `.min.cjs` sibling is written. HTML output (`output: "html"`, the default) keeps the existing behavior: basename filename, resolved `variables` (empty when omitted), and any `minify` field is ignored.
+The wrapped module is written as-is, without in-memory minification; no `.min.mjs` or `.min.cjs` sibling is written. HTML output (`output: "html"`, the default) keeps the existing behavior: basename filename and resolved `variables` (empty when omitted).
 
 ### Config validation
 
@@ -133,7 +131,7 @@ The config file is validated against a strict Zod schema before any build step. 
 ```
 Invalid tsBuild configuration:
 [0].minify.terser.enabledd: Unrecognized key: "enabledd"
-[1].templates[0].minify.terser.mangle: Invalid regular expression
+[1].minify.terser.mangle: Invalid regular expression
 ```
 
 Malformed JSON is reported the same way: the logged error message includes `Invalid tsBuild configuration:` (followed by the parser message), and the CLI returns exit code 1.
@@ -187,10 +185,6 @@ type TsBuildItem = {
 			type: 'string' | 'mtime';
 			value: string;
 		}[];
-		minify?: {
-			terser?: boolean | TerserConfig;
-			terserCompanion?: boolean;
-		};
 	}[];
 	copy?: {
 		destination: string;

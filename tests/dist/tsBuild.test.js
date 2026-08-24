@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { minify } from 'terser';
+import jTDAL from '@stefanobalocco/jtdal';
 import terserCompanion from '@stefanobalocco/tersercompanion';
 import { ZeptoLogger } from '@stefanobalocco/zeptologger';
 import TsBuild from '../../dist/tsBuild.js';
@@ -391,6 +392,11 @@ const strictSchemaCases = [
         expectedLine: '[0].templates[0].unknownTemplateField: Unrecognized key: "unknownTemplateField"'
     },
     {
+        name: 'template minify',
+        config: { target: 'lib', tsConfig: 'tsconfig.json', templates: [{ filename: 'a.tpl', destination: 'out', minify: { terser: true } }] },
+        expectedLine: '[0].templates[0].minify: Unrecognized key: "minify"'
+    },
+    {
         name: 'variable',
         config: { target: 'lib', tsConfig: 'tsconfig.json', templates: [{ filename: 'a.tpl', destination: 'out', variables: [{ name: 'x', type: 'string', value: 'y', unknownVariableField: true }] }] },
         expectedLine: '[0].templates[0].variables[0].unknownVariableField: Unrecognized key: "unknownVariableField"'
@@ -401,8 +407,9 @@ const strictSchemaCases = [
         expectedLine: '[0].copy[0].unknownCopyField: Unrecognized key: "unknownCopyField"'
     }
 ];
-let strictSchemaCase;
-for (strictSchemaCase of strictSchemaCases) {
+const cL1 = strictSchemaCases.length;
+for (let iL1 = 0; iL1 < cL1; iL1++) {
+    const strictSchemaCase = strictSchemaCases[iL1];
     test.serial(`runCli rejects unknown key in ${strictSchemaCase.name} object`, async (t) => {
         const ws = await createWorkspace('minimal');
         await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([strictSchemaCase.config]));
@@ -574,26 +581,26 @@ test.serial('cjs template output writes .cjs, omits variables, and renders from 
     const pagePath = path.join(ws, 'out/page.cjs');
     t.true(await exists(pagePath));
     t.false(await exists(path.join(ws, 'out/page.min.cjs')));
+    const templateSource = await readFile(path.join(ws, 'templates/page.tpl'), 'utf8');
+    const expected = `module.exports = ${new jTDAL().CompileToString(templateSource)};`;
+    const actual = await readFile(pagePath, 'utf8');
+    t.is(actual, expected);
     const require = createRequire(import.meta.url);
     const renderer = require(pagePath);
     const html = renderer({ title: 'CJS title', stamp: 7 });
     t.true(html.includes('CJS title'));
     t.true(html.includes('7'));
 });
-test.serial('esm template minification defaults are smaller and executable, opt-out keeps source', async (t) => {
+test.serial('esm template output is written as-is without in-memory minification', async (t) => {
     const ws = await createWorkspace('template-output');
-    await buildItem(ws, 'compare.json', 'lib');
-    const defaultPath = path.join(ws, 'out-default/page.mjs');
-    const plainPath = path.join(ws, 'out-plain/page.mjs');
-    t.true(await exists(defaultPath));
-    t.true(await exists(plainPath));
-    t.true(await fileSize(defaultPath) < await fileSize(plainPath));
-    t.false(await exists(path.join(ws, 'out-default/page.min.mjs')));
-    t.false(await exists(path.join(ws, 'out-plain/page.min.mjs')));
-    const plainSource = await readFile(plainPath, 'utf8');
-    t.true(plainSource.includes('export default function(d){'));
-    const mod = await import(pathToFileURL(defaultPath).href);
-    t.true(mod.default({ title: 'min', stamp: 1 }).includes('min'));
+    await buildItem(ws, 'esm.json', 'lib');
+    const pagePath = path.join(ws, 'out/page.mjs');
+    t.true(await exists(pagePath));
+    t.false(await exists(path.join(ws, 'out/page.min.mjs')));
+    const templateSource = await readFile(path.join(ws, 'templates/page.tpl'), 'utf8');
+    const expected = `export default ${new jTDAL().CompileToString(templateSource)}`;
+    const actual = await readFile(pagePath, 'utf8');
+    t.is(actual, expected);
 });
 test.serial('extensionless esm template writes name.mjs', async (t) => {
     const ws = await createWorkspace('template-output');
@@ -603,7 +610,7 @@ test.serial('extensionless esm template writes name.mjs', async (t) => {
     const mod = await import(pathToFileURL(pagePath).href);
     t.true(mod.default({ title: 'plain', stamp: 1 }).includes('plain'));
 });
-test.serial('html template without variables renders basename with empty data and ignores minify', async (t) => {
+test.serial('html template without variables renders basename with empty data', async (t) => {
     const ws = await createWorkspace('template-output');
     await buildItem(ws, 'html.json', 'lib');
     const pagePath = path.join(ws, 'out/page.html');
