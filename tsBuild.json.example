@@ -60,7 +60,22 @@
 					{
 						"name": "bundle_mtime",
 						"type": "mtime",
-						"value": "dist/app.min.js"
+						"value": "dist/app.js"
+					},
+					{
+						"name": "bundle_hash",
+						"type": "hash-sha2-224",
+						"value": "dist/app.js"
+					},
+					{
+						"name": "bundle_token",
+						"type": "hash-sha3-224",
+						"value": [ "dist/app.js", "assets" ]
+					},
+					{
+						"name": "bundle_blake",
+						"type": "hash-blake2s-256",
+						"value": "dist/app.js"
 					}
 				]
 			}

@@ -1,0 +1,16 @@
+[
+	{
+		"target": "lib",
+		"tsConfig": "tsconfig.json",
+		"prefix": "project",
+		"templatesHtml": [
+			{
+				"filename": "templates/token.html",
+				"destination": "out/trailing",
+				"variables": [
+					{ "name": "token", "type": "hash-sha2-224", "value": [ "assets/abc", "this/is/a/prefix/" ] }
+				]
+			}
+		]
+	}
+]

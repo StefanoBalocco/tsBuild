@@ -6,9 +6,9 @@ Build TypeScript targets and minify their JavaScript output.
 
 - Config-driven multiple targets: define one or more build targets in a JSON config
 - TypeScript API compilation via the TypeScript compiler API (not `tsc` CLI)
-- Optional minification: Terser, TerserCompanion, or both (when both produce results, the smaller is selected; if Terser produces no output, TerserCompanion processes the original source). Terser options are limited to `module`, `toplevel`, and `mangle`
+- Optional minification: Terser, TerserCompanion, or both. Terser runs first; with both enabled, TerserCompanion processes the current best. The strict smallest UTF-8-byte output wins. Terser options are limited to `module`, `toplevel`, and `mangle`
 - Asset copying with optional destination cleanup
-- jTDAL template rendering: HTML pages with string and file-mtime variables, and self-contained ESM/CJS renderer modules (minified by the build-level `minify` stage when their generated paths are listed there)
+- jTDAL template rendering: HTML pages with string, mtime, and file-backed hash variables, and self-contained ESM/CJS renderer modules (minified by the build-level `minify` stage when their generated paths are listed there)
 - Strict config validation: unknown keys and malformed values fail the CLI run before any build step
 - `all` target runs every configured target in declaration order
 - `-f` flag for custom config path
@@ -62,7 +62,10 @@ Create a `tsBuild.json` file (or any JSON file) with an array of target objects:
 				"destination": "out/pages",
 				"variables": [
 					{ "name": "title", "type": "string", "value": "My App" },
-					{ "name": "stamp", "type": "mtime", "value": "src/data.json" }
+					{ "name": "stamp", "type": "mtime", "value": "src/data.json" },
+					{ "name": "app_hash", "type": "hash-sha2-224", "value": "dist/index.js" },
+					{ "name": "app_token", "type": "hash-sha3-224", "value": [ "dist/index.js", "assets" ] },
+					{ "name": "app_blake", "type": "hash-blake2s-256", "value": "dist/index.js" }
 				]
 			}
 		]
@@ -80,17 +83,27 @@ Create a `tsBuild.json` file (or any JSON file) with an array of target objects:
 | `minify.terser` | `boolean` or object | `true` when `minify` exists | Enable Terser. Boolean form controls only `enabled`. Object form: `enabled`, `module`, `toplevel`, `mangle` (see below) |
 | `minify.terserCompanion` | `boolean` | `true` when `minify` exists | Enable TerserCompanion optimization |
 | `copy` | `object[]` | — | Asset copy operations. Each entry: `destination` (config-root directory), `files` (prefix-relative source file paths — individual files only, each copied to `destination/path.basename(file)`), `clean` (boolean, default false — when true, recreates destination before copy) |
-| `templatesHtml` | `object[]` | — | jTDAL HTML template rendering. Each entry: `filename` (prefix-relative source), `destination` (config-root directory), `variables` (optional; array of `{ name, type: "string" | "mtime", value }`) |
+| `templatesHtml` | `object[]` | — | jTDAL HTML template rendering. Each entry: `filename` (prefix-relative source), `destination` (config-root directory), `variables` (optional; array of `{ name, type, value }` where `type` is one of `string`, `mtime`, `hash-sha2-224`, `hash-sha3-224`, `hash-blake2s-256`) |
 | `templatesJs` | `object[]` | — | jTDAL renderer module generation. Each entry: `filename` (prefix-relative source), `destination` (config-root directory), `output` (`"esm"` or `"cjs"`, required). Modules are written unminified; list their generated `.mjs`/`.cjs` paths under `minify.files` to produce `.min.mjs`/`.min.cjs` siblings |
 
 Per-target operation order: Compile TypeScript → Render templatesJs → Minify → Copy files → Render templatesHtml → `✓ Built.` log.
 
 **Resolution rules:**
-- Template `filename`, `mtime` variable `value` file, and `copy.files` resolve from the target directory (config directory + `prefix`).
+- Template `filename`, `mtime`/hash variable `value` source, and `copy.files` resolve from the target directory (config directory + `prefix`).
 - All `destination` paths resolve from the configuration directory only; the prefix is never appended.
 - Template and copy output filenames use `path.basename()` of the source file. Each `copy.files` entry is an individual file (directory entries are not supported); it is copied to `destination/path.basename(file)`.
 
-**`mtime` type:** Passes the numeric Unix timestamp in whole milliseconds from `fs.stat().mtime.getTime()`.
+**Template variables:** `variables` are resolved only for HTML templates (`templatesHtml`); `templatesJs` continues to reject them. Five types are supported:
+
+| Type | `value` | Rendered |
+|------|---------|----------|
+| `string` | a string | the string verbatim |
+| `mtime` | a source string or `[ source, prefix ]` | whole-millisecond `fs.stat().mtime.getTime()` |
+| `hash-sha2-224` | a source string or `[ source, prefix ]` | lower-case hex SHA-224 of the source's raw bytes |
+| `hash-sha3-224` | a source string or `[ source, prefix ]` | lower-case hex SHA3-224 of the source's raw bytes |
+| `hash-blake2s-256` | a source string or `[ source, prefix ]` | lower-case hex BLAKE2s-256 of the source's raw bytes |
+
+A string `value` renders the direct token: the numeric mtime or the hex digest. A `[ source, prefix ]` tuple renders a URL token: `basename?TOKEN` when the prefix is empty, otherwise `prefix/basename?TOKEN`. The prefix is output-only and never affects which source file is read. Backslashes in the prefix become `/`; a leading `/` is preserved; trailing `/` characters are removed; internal slashes are unchanged. Hashes use the runtime `crypto.getHashes()` set — an unavailable algorithm fails the build/CLI error path. Missing source files retain the raw filesystem error.
 
 ### Terser options
 
@@ -129,7 +142,7 @@ JS template modules are written unminified; there is no per-template minificatio
 
 ### Config validation
 
-The config file is validated against a strict Zod schema before any build step. Unknown keys are rejected at every level, `mangle` must be `false` or valid regular expression text, and target identifiers must be unique. Each violation fails the CLI run with exit code 1 and one error line per issue, with the full path to the offending field:
+The config file is validated against a strict Zod schema before any build step. Unknown keys are rejected at every level, `mangle` must be `false` or valid regular expression text, and target identifiers must be unique. Each variable's `type` must be one of the five supported values and its `value` must be a string (for `string`) or a string or `[ source, prefix ]` tuple (for `mtime` and hashes); an unknown `type` is reported at the `.type` path. Each violation fails the CLI run with exit code 1 and one error line per issue, with the full path to the offending field:
 
 ```
 Invalid tsBuild configuration:
@@ -180,11 +193,10 @@ type TsBuildItem = {
 	templatesHtml?: {
 		filename: string;
 		destination: string;
-		variables?: {
-			name: string;
-			type: 'string' | 'mtime';
-			value: string;
-		}[];
+		variables?: (
+			{ name: string; type: 'string'; value: string } |
+			{ name: string; type: 'mtime' | 'hash-sha2-224' | 'hash-sha3-224' | 'hash-blake2s-256'; value: string | [ string, string ] }
+		)[];
 	}[];
 	templatesJs?: {
 		filename: string;
@@ -223,7 +235,9 @@ Compile TypeScript using the compiler API. Throws on diagnostic errors.
 
 ### `TsBuild.minify( absPath: string, useTerser: boolean, useTerserCompanion: boolean, terserOptions?: TerserOptions ): Promise<boolean>`
 
-Minify a single JS file. Writes minified output as a sibling file named with `.min` before the original extension: `index.js` → `index.min.js`, `lib.mjs` → `lib.min.mjs`, `lib.cjs` → `lib.min.cjs`. Returns `true` when minified output is written. `terserOptions` defaults to `{ module: true, mangle: "^_" }`; `toplevel` defaults to `false`.
+Minify a single JS file. Writes minified output as a sibling file named with `.min` before the original extension: `index.js` → `index.min.js`, `lib.mjs` → `lib.min.mjs`, `lib.cjs` → `lib.min.cjs`. Returns `true` only when the best enabled transformation is strictly smaller than the source in UTF-8 byte length. Terser runs first; TerserCompanion receives the current best (the source when Terser did not strictly shrink). Each result is selected only on a strict byte-length reduction. Empty, equal, or larger results are no gain: `minify` returns `false` and deletes any existing sibling `.min` file, ignoring only `ENOENT`; the source remains unchanged. When both transformations are disabled, `minify` is a no-op and returns `false`. `terserOptions` defaults to `{ module: true, mangle: "^_" }`; `toplevel` defaults to `false`.
+
+**Warning:** Configurations or downstream steps that reference a `.min` file must tolerate `ENOENT` when minification produces no smaller output. Reference the original file when a guaranteed path is required.
 
 ### `TsBuild.copy( absDestination: string, absFiles: string[], clean: boolean ): Promise<void>`
 

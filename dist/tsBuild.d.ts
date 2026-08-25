@@ -18,11 +18,19 @@ type TsMinify = {
     terser?: TsTerser;
     terserCompanion?: boolean;
 };
-type TsVariable = {
+type TsHashVariableType = 'hash-sha2-224' | 'hash-sha3-224' | 'hash-blake2s-256';
+type TsFileVariableType = 'mtime' | TsHashVariableType;
+type TsStringVariable = {
     name: string;
-    type: 'string' | 'mtime';
+    type: 'string';
     value: string;
 };
+type TsFileVariable = {
+    name: string;
+    type: TsFileVariableType;
+    value: string | [string, string];
+};
+type TsVariable = TsStringVariable | TsFileVariable;
 type TsHtmlTemplate = {
     filename: string;
     destination: string;
@@ -53,9 +61,10 @@ export default class TsBuild {
     private readonly _configDirectory;
     constructor(configDirectory: string);
     static compile(configPath: string): void;
-    private static _minifySource;
     static minify(absPath: string, useTerser: boolean, useTerserCompanion: boolean, terserOptions?: TerserOptions): Promise<boolean>;
     private static _formatIssueLines;
+    private static _hashFile;
+    private static _formatTupleToken;
     private static _resolveTerserConfig;
     static copy(absDestination: string, absFiles: string[], clean: boolean): Promise<void>;
     static templating(absTemplate: string, absDestination: string, variables: Record<string, string | number>): Promise<void>;

@@ -2,6 +2,7 @@
 import jTDAL from '@stefanobalocco/jtdal';
 import terserCompanion from '@stefanobalocco/tersercompanion';
 import { LogLevel, ZeptoLogger } from '@stefanobalocco/zeptologger';
+import { createHash, getHashes } from 'node:crypto';
 import { copyFile, mkdir, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,11 @@ const defaultManglePattern = '^_';
 const defaultTerserOptions = {
     module: true,
     mangle: defaultManglePattern
+};
+const hashAlgorithmMap = {
+    'hash-sha2-224': 'sha224',
+    'hash-sha3-224': 'sha3-224',
+    'hash-blake2s-256': 'blake2s256'
 };
 const tsTerserConfigSchema = z.object({
     enabled: z.boolean().optional(),
@@ -37,11 +43,17 @@ const tsMinifySchema = z.object({
     terser: tsTerserSchema.optional(),
     terserCompanion: z.boolean().optional()
 }).strict();
-const tsVariableSchema = z.object({
+const tsStringVariableSchema = z.object({
     name: z.string(),
-    type: z.enum(['string', 'mtime']),
+    type: z.literal('string'),
     value: z.string()
 }).strict();
+const tsFileVariableSchema = z.object({
+    name: z.string(),
+    type: z.enum(['mtime', 'hash-sha2-224', 'hash-sha3-224', 'hash-blake2s-256']),
+    value: z.union([z.string(), z.tuple([z.string(), z.string()])])
+}).strict();
+const tsVariableSchema = z.discriminatedUnion('type', [tsStringVariableSchema, tsFileVariableSchema]);
 const tsHtmlTemplateSchema = z.object({
     filename: z.string(),
     destination: z.string(),
@@ -115,44 +127,44 @@ export default class TsBuild {
             }));
         }
     }
-    static async _minifySource(source, useTerser, useTerserCompanion, terserOptions) {
-        let returnValue = '';
-        const compressed = [];
-        if (useTerser) {
-            const tmpValue = await minify(source, {
-                module: terserOptions.module ?? defaultTerserOptions.module,
-                toplevel: terserOptions.toplevel ?? false,
-                compress: { defaults: true, passes: 2 },
-                mangle: (false === terserOptions.mangle)
-                    ? false
-                    : { properties: { regex: RegExp(('string' === typeof terserOptions.mangle) ? terserOptions.mangle : defaultManglePattern) } }
-            });
-            if (tmpValue.code) {
-                compressed[0] = [tmpValue.code, Buffer.byteLength(tmpValue.code, 'utf8')];
-                ZeptoLogger.instance.log(LogLevel.INFO, `[MINIFY] Size> Terser         : ${compressed[0][1]}`);
-            }
-        }
-        if (useTerserCompanion) {
-            const tmpValue = terserCompanion((compressed[0] && compressed[0][0]) ?? source);
-            compressed[1] = [tmpValue, Buffer.byteLength(tmpValue, 'utf8')];
-            ZeptoLogger.instance.log(LogLevel.INFO, `[MINIFY] Size> TerserCompanion: ${compressed[1][1]}`);
-        }
-        const output = (compressed[0] && compressed[1]) ? ((compressed[1][1] < compressed[0][1]) ? compressed[1][0] : compressed[0][0]) : ((compressed[1] && compressed[1][0]) ?? (compressed[0] && compressed[0][0]) ?? '');
-        if (output) {
-            ZeptoLogger.instance.log(LogLevel.INFO, `[MINIFY] Size> Output         : ${Buffer.byteLength(output, 'utf8')}`);
-        }
-        returnValue = output;
-        return returnValue;
-    }
     static async minify(absPath, useTerser, useTerserCompanion, terserOptions = defaultTerserOptions) {
         let returnValue = false;
         if (useTerser || useTerserCompanion) {
             const source = await readFile(absPath, 'utf8');
             const parsedPath = path.parse(absPath);
             const outPath = path.join(parsedPath.dir, `${parsedPath.name}.min${parsedPath.ext}`);
-            const output = await TsBuild._minifySource(source, useTerser, useTerserCompanion, terserOptions);
-            if (output) {
-                await writeFile(outPath, output);
+            const compressed = [source, Buffer.byteLength(source, 'utf8')];
+            ZeptoLogger.instance.log(LogLevel.INFO, `[MINIFY] Size> Original       : ${compressed[1]}`);
+            if (useTerser) {
+                const tmpValue = await minify(source, {
+                    module: terserOptions.module ?? defaultTerserOptions.module,
+                    toplevel: terserOptions.toplevel ?? false,
+                    compress: { defaults: true, passes: 2 },
+                    mangle: (false === terserOptions.mangle)
+                        ? false
+                        : { properties: { regex: RegExp(('string' === typeof terserOptions.mangle) ? terserOptions.mangle : defaultManglePattern) } }
+                });
+                if (tmpValue.code) {
+                    const tmpLength = Buffer.byteLength(tmpValue.code, 'utf8');
+                    ZeptoLogger.instance.log(LogLevel.INFO, `[MINIFY] Size> Terser         : ${tmpLength}`);
+                    if (tmpLength < compressed[1]) {
+                        compressed[0] = tmpValue.code;
+                        compressed[1] = tmpLength;
+                    }
+                }
+            }
+            if (useTerserCompanion) {
+                const tmpValue = terserCompanion(compressed[0]);
+                const tmpLength = Buffer.byteLength(tmpValue, 'utf8');
+                ZeptoLogger.instance.log(LogLevel.INFO, `[MINIFY] Size> TerserCompanion: ${tmpLength}`);
+                if (tmpLength < compressed[1]) {
+                    compressed[0] = tmpValue;
+                    compressed[1] = tmpLength;
+                }
+            }
+            ZeptoLogger.instance.log(LogLevel.INFO, `[MINIFY] Size> Output         : ${compressed[1]}`);
+            if (compressed[0] != source) {
+                await writeFile(outPath, compressed[0]);
                 returnValue = true;
             }
             else {
@@ -171,7 +183,7 @@ export default class TsBuild {
     static _formatIssueLines(issue, parentPath) {
         const returnValue = [];
         const issuePath = [...parentPath, ...issue.path];
-        if ('invalid_union' === issue.code) {
+        if (('invalid_union' === issue.code) && (0 < issue.errors.length)) {
             const branchSpecific = issue.errors.map((branchErrors) => branchErrors.some((branchIssue) => ('unrecognized_keys' === branchIssue.code) || (0 < branchIssue.path.length)));
             const hasSpecificBranch = branchSpecific.includes(true);
             const cL1 = issue.errors.length;
@@ -208,6 +220,34 @@ export default class TsBuild {
                 const leafLabel = formattedPath ? formattedPath : '(root)';
                 returnValue.push(`${leafLabel}: ${issue.message}`);
             }
+        }
+        return returnValue;
+    }
+    static async _hashFile(variableType, algorithm, absSource) {
+        let returnValue = '';
+        if (getHashes().includes(algorithm)) {
+            const contents = await readFile(absSource);
+            returnValue = createHash(algorithm).update(contents).digest('hex');
+        }
+        else {
+            throw new Error(`Hash algorithm "${algorithm}" is unavailable for variable type "${variableType}"`);
+        }
+        return returnValue;
+    }
+    static _formatTupleToken(source, prefix, token) {
+        let returnValue = '';
+        const converted = prefix.replace(/\\/g, '/');
+        const stripped = converted.replace(/\/+$/, '');
+        const normalizedPrefix = ('' === stripped) ? ((converted.startsWith('/')) ? '/' : '') : stripped;
+        const basename = path.basename(source);
+        if ('' === normalizedPrefix) {
+            returnValue = `${basename}?${token}`;
+        }
+        else if ('/' === normalizedPrefix) {
+            returnValue = `/${basename}?${token}`;
+        }
+        else {
+            returnValue = `${normalizedPrefix}/${basename}?${token}`;
         }
         return returnValue;
     }
@@ -320,7 +360,30 @@ export default class TsBuild {
                             break;
                         }
                         case 'mtime': {
-                            variables[variable.name] = (await stat(path.resolve(targetDirectory, variable.value))).mtime.getTime();
+                            if ('string' === typeof variable.value) {
+                                variables[variable.name] = (await stat(path.resolve(targetDirectory, variable.value))).mtime.getTime();
+                            }
+                            else {
+                                const sourcePath = variable.value[0];
+                                const prefix = variable.value[1];
+                                const timestamp = (await stat(path.resolve(targetDirectory, sourcePath))).mtime.getTime();
+                                variables[variable.name] = TsBuild._formatTupleToken(sourcePath, prefix, timestamp);
+                            }
+                            break;
+                        }
+                        case 'hash-sha2-224':
+                        case 'hash-sha3-224':
+                        case 'hash-blake2s-256': {
+                            const algorithm = hashAlgorithmMap[variable.type];
+                            if ('string' === typeof variable.value) {
+                                variables[variable.name] = await TsBuild._hashFile(variable.type, algorithm, path.resolve(targetDirectory, variable.value));
+                            }
+                            else {
+                                const sourcePath = variable.value[0];
+                                const prefix = variable.value[1];
+                                const digest = await TsBuild._hashFile(variable.type, algorithm, path.resolve(targetDirectory, sourcePath));
+                                variables[variable.name] = TsBuild._formatTupleToken(sourcePath, prefix, digest);
+                            }
                             break;
                         }
                     }

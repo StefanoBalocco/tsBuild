@@ -3,6 +3,7 @@
 import jTDAL from '@stefanobalocco/jtdal';
 import terserCompanion from '@stefanobalocco/tersercompanion';
 import { LogLevel, ZeptoLogger } from '@stefanobalocco/zeptologger';
+import { createHash, getHashes } from 'node:crypto';
 import { copyFile, mkdir, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +25,12 @@ const defaultManglePattern: string = '^_';
 const defaultTerserOptions: Required<Omit<TerserOptions, 'toplevel'>> = {
 	module: true,
 	mangle: defaultManglePattern
+};
+
+const hashAlgorithmMap: Record<TsHashVariableType, string> = {
+	'hash-sha2-224': 'sha224',
+	'hash-sha3-224': 'sha3-224',
+	'hash-blake2s-256': 'blake2s256'
 };
 
 type TsTerserConfig = {
@@ -67,17 +74,49 @@ const tsMinifySchema: z.ZodType<TsMinify> = z.object( {
 	terserCompanion: z.boolean().optional()
 } ).strict();
 
-type TsVariable = {
+type TsHashVariableType = 'hash-sha2-224' | 'hash-sha3-224' | 'hash-blake2s-256';
+type TsFileVariableType = 'mtime' | TsHashVariableType;
+
+type TsStringVariable = {
 	name: string;
-	type: 'string' | 'mtime';
+	type: 'string';
 	value: string;
 };
 
-const tsVariableSchema: z.ZodType<TsVariable> = z.object( {
+type TsFileVariable = {
+	name: string;
+	type: TsFileVariableType;
+	value: string | [ string, string ];
+};
+
+type TsVariable = TsStringVariable | TsFileVariable;
+
+const tsStringVariableSchema: z.ZodObject<{
+	name: z.ZodString;
+	type: z.ZodLiteral<'string'>;
+	value: z.ZodString;
+}> = z.object( {
 	name: z.string(),
-	type: z.enum( [ 'string', 'mtime' ] ),
+	type: z.literal( 'string' ),
 	value: z.string()
 } ).strict();
+
+const tsFileVariableSchema: z.ZodObject<{
+	name: z.ZodString;
+	type: z.ZodEnum<{
+		mtime: 'mtime';
+		'hash-sha2-224': 'hash-sha2-224';
+		'hash-sha3-224': 'hash-sha3-224';
+		'hash-blake2s-256': 'hash-blake2s-256';
+	}>;
+	value: z.ZodUnion<readonly [ z.ZodString, z.ZodTuple<[ z.ZodString, z.ZodString ], null> ]>;
+}> = z.object( {
+	name: z.string(),
+	type: z.enum( [ 'mtime', 'hash-sha2-224', 'hash-sha3-224', 'hash-blake2s-256' ] ),
+	value: z.union( [ z.string(), z.tuple( [ z.string(), z.string() ] ) ] )
+} ).strict();
+
+const tsVariableSchema: z.ZodType<TsVariable> = z.discriminatedUnion( 'type', [ tsStringVariableSchema, tsFileVariableSchema ] );
 
 type TsHtmlTemplate = {
 	filename: string;
@@ -196,48 +235,6 @@ export default class TsBuild {
 		}
 	}
 
-	private static async _minifySource(
-		source: string,
-		useTerser: boolean,
-		useTerserCompanion: boolean,
-		terserOptions: TerserOptions
-	): Promise<string> {
-		let returnValue: string = '';
-		const compressed: [ string, number ][] = [];
-
-		if( useTerser ) {
-			const tmpValue: MinifyOutput = await minify( source, {
-				module: terserOptions.module ?? defaultTerserOptions.module,
-				toplevel: terserOptions.toplevel ?? false,
-				compress: { defaults: true, passes: 2 },
-				mangle: ( false === terserOptions.mangle )
-					? false
-					: { properties: { regex: RegExp( ( 'string' === typeof terserOptions.mangle ) ? terserOptions.mangle : defaultManglePattern ) } }
-			} );
-			if( tmpValue.code ) {
-				compressed[ 0 ] = [ tmpValue.code, Buffer.byteLength( tmpValue.code, 'utf8' ) ];
-				ZeptoLogger.instance.log( LogLevel.INFO, `[MINIFY] Size> Terser         : ${ compressed[ 0 ][ 1 ] }` );
-			}
-		}
-
-		if( useTerserCompanion ) {
-			const tmpValue: string = terserCompanion( ( compressed[ 0 ] && compressed[ 0 ][ 0 ] ) ?? source );
-			compressed[ 1 ] = [ tmpValue, Buffer.byteLength( tmpValue, 'utf8' ) ];
-			ZeptoLogger.instance.log( LogLevel.INFO, `[MINIFY] Size> TerserCompanion: ${ compressed[ 1 ][ 1 ] }` );
-		}
-
-		const output: string = ( compressed[ 0 ] && compressed[ 1 ] ) ? (
-			( compressed[ 1 ][ 1 ] < compressed[ 0 ][ 1 ] ) ? compressed[ 1 ][ 0 ] : compressed[ 0 ][ 0 ]
-		) : (
-			( compressed[ 1 ] && compressed[ 1 ][ 0 ] ) ?? ( compressed[ 0 ] && compressed[ 0 ][ 0 ] ) ?? ''
-		);
-		if( output ) {
-			ZeptoLogger.instance.log( LogLevel.INFO, `[MINIFY] Size> Output         : ${ Buffer.byteLength( output, 'utf8' ) }` );
-		}
-		returnValue = output;
-		return returnValue;
-	}
-
 	public static async minify(
 		absPath: string,
 		useTerser: boolean,
@@ -249,9 +246,42 @@ export default class TsBuild {
 			const source: string = await readFile( absPath, 'utf8' );
 			const parsedPath: path.ParsedPath = path.parse( absPath );
 			const outPath: string = path.join( parsedPath.dir, `${ parsedPath.name }.min${ parsedPath.ext }` );
-			const output: string = await TsBuild._minifySource( source, useTerser, useTerserCompanion, terserOptions );
-			if( output ) {
-				await writeFile( outPath, output );
+			const compressed: [ string, number ] = [ source, Buffer.byteLength( source, 'utf8' ) ];
+			ZeptoLogger.instance.log( LogLevel.INFO, `[MINIFY] Size> Original       : ${ compressed[ 1 ] }` );
+
+			if( useTerser ) {
+				const tmpValue: MinifyOutput = await minify( source, {
+					module: terserOptions.module ?? defaultTerserOptions.module,
+					toplevel: terserOptions.toplevel ?? false,
+					compress: { defaults: true, passes: 2 },
+					mangle: ( false === terserOptions.mangle )
+						? false
+						: { properties: { regex: RegExp( ( 'string' === typeof terserOptions.mangle ) ? terserOptions.mangle : defaultManglePattern ) } }
+				} );
+				if( tmpValue.code ) {
+					const tmpLength: number = Buffer.byteLength( tmpValue.code, 'utf8' );
+					ZeptoLogger.instance.log( LogLevel.INFO, `[MINIFY] Size> Terser         : ${ tmpLength }` );
+					if( tmpLength < compressed[ 1 ] ) {
+						compressed[ 0 ] = tmpValue.code;
+						compressed[ 1 ] = tmpLength;
+					}
+				}
+			}
+
+			if( useTerserCompanion ) {
+				const tmpValue: string = terserCompanion( compressed[ 0 ] );
+				const tmpLength: number = Buffer.byteLength( tmpValue, 'utf8' );
+				ZeptoLogger.instance.log( LogLevel.INFO, `[MINIFY] Size> TerserCompanion: ${ tmpLength }` );
+				if( tmpLength < compressed[ 1 ] ) {
+					compressed[ 0 ] = tmpValue;
+					compressed[ 1 ] = tmpLength;
+				}
+			}
+
+			ZeptoLogger.instance.log( LogLevel.INFO, `[MINIFY] Size> Output         : ${ compressed[ 1 ] }` );
+
+			if( compressed[ 0 ] != source ) {
+				await writeFile( outPath, compressed[ 0 ] );
 				returnValue = true;
 			} else {
 				try {
@@ -270,7 +300,7 @@ export default class TsBuild {
 	private static _formatIssueLines( issue: z.ZodIssue, parentPath: readonly PropertyKey[] ): string[] {
 		const returnValue: string[] = [];
 		const issuePath: readonly ( string | number )[] = [ ...parentPath, ...issue.path ] as readonly ( string | number )[];
-		if( 'invalid_union' === issue.code ) {
+		if( ( 'invalid_union' === issue.code ) && ( 0 < issue.errors.length ) ) {
 			const branchSpecific: boolean[] = issue.errors.map( ( branchErrors: z.ZodIssue[] ): boolean => branchErrors.some( ( branchIssue: z.ZodIssue ): boolean => ( 'unrecognized_keys' === branchIssue.code ) || ( 0 < branchIssue.path.length ) ) );
 			const hasSpecificBranch: boolean = branchSpecific.includes( true );
 			const cL1: number = issue.errors.length;
@@ -304,6 +334,33 @@ export default class TsBuild {
 				const leafLabel: string = formattedPath ? formattedPath : '(root)';
 				returnValue.push( `${ leafLabel }: ${ issue.message }` );
 			}
+		}
+		return returnValue;
+	}
+
+	private static async _hashFile( variableType: TsHashVariableType, algorithm: string, absSource: string ): Promise<string> {
+		let returnValue: string = '';
+		if( getHashes().includes( algorithm ) ) {
+			const contents: Buffer = await readFile( absSource );
+			returnValue = createHash( algorithm ).update( contents ).digest( 'hex' );
+		} else {
+			throw new Error( `Hash algorithm "${ algorithm }" is unavailable for variable type "${ variableType }"` );
+		}
+		return returnValue;
+	}
+
+	private static _formatTupleToken( source: string, prefix: string, token: string | number ): string {
+		let returnValue: string = '';
+		const converted: string = prefix.replace( /\\/g, '/' );
+		const stripped: string = converted.replace( /\/+$/, '' );
+		const normalizedPrefix: string = ( '' === stripped ) ? ( ( converted.startsWith( '/' ) ) ? '/' : '' ) : stripped;
+		const basename: string = path.basename( source );
+		if( '' === normalizedPrefix ) {
+			returnValue = `${ basename }?${ token }`;
+		} else if( '/' === normalizedPrefix ) {
+			returnValue = `/${ basename }?${ token }`;
+		} else {
+			returnValue = `${ normalizedPrefix }/${ basename }?${ token }`;
 		}
 		return returnValue;
 	}
@@ -427,7 +484,28 @@ export default class TsBuild {
 							break;
 						}
 						case 'mtime': {
-							variables[ variable.name ] = ( await stat( path.resolve( targetDirectory, variable.value ) ) ).mtime.getTime();
+							if( 'string' === typeof variable.value ) {
+								variables[ variable.name ] = ( await stat( path.resolve( targetDirectory, variable.value ) ) ).mtime.getTime();
+							} else {
+								const sourcePath: string = variable.value[ 0 ];
+								const prefix: string = variable.value[ 1 ];
+								const timestamp: number = ( await stat( path.resolve( targetDirectory, sourcePath ) ) ).mtime.getTime();
+								variables[ variable.name ] = TsBuild._formatTupleToken( sourcePath, prefix, timestamp );
+							}
+							break;
+						}
+						case 'hash-sha2-224':
+						case 'hash-sha3-224':
+						case 'hash-blake2s-256': {
+							const algorithm: string = hashAlgorithmMap[ variable.type ];
+							if( 'string' === typeof variable.value ) {
+								variables[ variable.name ] = await TsBuild._hashFile( variable.type, algorithm, path.resolve( targetDirectory, variable.value ) );
+							} else {
+								const sourcePath: string = variable.value[ 0 ];
+								const prefix: string = variable.value[ 1 ];
+								const digest: string = await TsBuild._hashFile( variable.type, algorithm, path.resolve( targetDirectory, sourcePath ) );
+								variables[ variable.name ] = TsBuild._formatTupleToken( sourcePath, prefix, digest );
+							}
 							break;
 						}
 					}
@@ -495,15 +573,15 @@ export default class TsBuild {
 					}
 				}
 				exitCode = 0;
-		} else {
-			if( 0 < targetsInvalid.size ) {
-				console.log( `Unknown target(s): ${ [ ...targetsInvalid ].join( ', ' ) }` );
-			}
+			} else {
+				if( 0 < targetsInvalid.size ) {
+					console.log( `Unknown target(s): ${ [ ...targetsInvalid ].join( ', ' ) }` );
+				}
 
-			console.log( 'Usage: tsBuild [-f tsBuild.json] <target> [<target> ...]' );
-			console.log( `Using ${ configFile }:` );
-			console.log( `Available targets: ${ [ ...targetsValid ].join( ', ' ) }, all` );
-		}
+				console.log( 'Usage: tsBuild [-f tsBuild.json] <target> [<target> ...]' );
+				console.log( `Using ${ configFile }:` );
+				console.log( `Available targets: ${ [ ...targetsValid ].join( ', ' ) }, all` );
+			}
 		} catch( err: unknown ) {
 			ZeptoLogger.instance.log( LogLevel.ERROR, err );
 		}
