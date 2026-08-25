@@ -3,8 +3,9 @@
 import jTDAL from '@stefanobalocco/jtdal';
 import terserCompanion from '@stefanobalocco/tersercompanion';
 import { LogLevel, ZeptoLogger } from '@stefanobalocco/zeptologger';
+import type { Hash } from 'node:crypto';
 import { createHash, getHashes } from 'node:crypto';
-import { copyFile, mkdir, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { MinifyOutput } from 'terser';
@@ -27,151 +28,96 @@ const defaultTerserOptions: Required<Omit<TerserOptions, 'toplevel'>> = {
 	mangle: defaultManglePattern
 };
 
-const hashAlgorithmMap: Record<TsHashVariableType, string> = {
-	'hash-sha2-224': 'sha224',
-	'hash-sha3-224': 'sha3-224',
-	'hash-blake2s-256': 'blake2s256'
-};
-
-type TsTerserConfig = {
-	enabled?: boolean;
-	module?: boolean;
-	toplevel?: boolean;
-	mangle?: false | string;
-};
-
-const tsTerserConfigSchema: z.ZodType<TsTerserConfig> = z.object( {
-	enabled: z.boolean().optional(),
-	module: z.boolean().optional(),
-	toplevel: z.boolean().optional(),
-	mangle: z.union( [
-		z.literal( false ),
-		z.string().refine( ( value: string ): boolean => {
-			let returnValue: boolean = true;
-			try {
-				RegExp( value );
-			} catch {
-				returnValue = false;
-			}
-			return returnValue;
-		}, { message: 'Invalid regular expression' } )
-	] ).optional()
-} ).strict();
-
-type TsTerser = z.infer<typeof tsTerserConfigSchema> | boolean;
-
-const tsTerserSchema: z.ZodType<TsTerser> = z.union( [ z.boolean(), tsTerserConfigSchema ] );
-
-type TsMinify = {
-	files: string[];
-	terser?: TsTerser;
-	terserCompanion?: boolean;
-};
-
-const tsMinifySchema: z.ZodType<TsMinify> = z.object( {
-	files: z.array( z.string() ),
-	terser: tsTerserSchema.optional(),
-	terserCompanion: z.boolean().optional()
-} ).strict();
-
-type TsHashVariableType = 'hash-sha2-224' | 'hash-sha3-224' | 'hash-blake2s-256';
-type TsFileVariableType = 'mtime' | TsHashVariableType;
-
-type TsStringVariable = {
-	name: string;
-	type: 'string';
-	value: string;
-};
-
-type TsFileVariable = {
-	name: string;
-	type: TsFileVariableType;
-	value: string | [ string, string ];
-};
-
-type TsVariable = TsStringVariable | TsFileVariable;
-
-const tsStringVariableSchema: z.ZodObject<{
-	name: z.ZodString;
-	type: z.ZodLiteral<'string'>;
-	value: z.ZodString;
-}> = z.object( {
-	name: z.string(),
-	type: z.literal( 'string' ),
-	value: z.string()
-} ).strict();
-
-const tsFileVariableSchema: z.ZodObject<{
-	name: z.ZodString;
-	type: z.ZodEnum<{
-		mtime: 'mtime';
-		'hash-sha2-224': 'hash-sha2-224';
-		'hash-sha3-224': 'hash-sha3-224';
-		'hash-blake2s-256': 'hash-blake2s-256';
-	}>;
-	value: z.ZodUnion<readonly [ z.ZodString, z.ZodTuple<[ z.ZodString, z.ZodString ], null> ]>;
-}> = z.object( {
-	name: z.string(),
-	type: z.enum( [ 'mtime', 'hash-sha2-224', 'hash-sha3-224', 'hash-blake2s-256' ] ),
-	value: z.union( [ z.string(), z.tuple( [ z.string(), z.string() ] ) ] )
-} ).strict();
-
-const tsVariableSchema: z.ZodType<TsVariable> = z.discriminatedUnion( 'type', [ tsStringVariableSchema, tsFileVariableSchema ] );
-
-type TsHtmlTemplate = {
-	filename: string;
-	destination: string;
-	variables?: TsVariable[];
-};
-
-const tsHtmlTemplateSchema: z.ZodType<TsHtmlTemplate> = z.object( {
-	filename: z.string(),
-	destination: z.string(),
-	variables: z.array( tsVariableSchema ).optional()
-} ).strict();
-
-type TsJsTemplate = {
-	filename: string;
-	destination: string;
-	output: 'esm' | 'cjs';
-};
-
-const tsJsTemplateSchema: z.ZodType<TsJsTemplate> = z.object( {
-	filename: z.string(),
-	destination: z.string(),
-	output: z.enum( [ 'esm', 'cjs' ] )
-} ).strict();
-
-type TsCopy = {
-	destination: string;
-	files: string[];
-	clean?: boolean;
-};
-
-const tsCopySchema: z.ZodType<TsCopy> = z.object( {
-	destination: z.string(),
-	files: z.array( z.string() ),
-	clean: z.boolean().optional()
-} ).strict();
-
 export const tsBuildItemSchema: z.ZodType<{
 	target: string;
 	tsConfig: string;
 	name?: string;
 	prefix?: string;
-	minify?: TsMinify;
-	copy?: TsCopy[];
-	templatesHtml?: TsHtmlTemplate[];
-	templatesJs?: TsJsTemplate[];
+	minify?: {
+		files: string[];
+		terser?: {
+			enabled?: boolean;
+			module?: boolean;
+			toplevel?: boolean;
+			mangle?: false | string;
+		} | boolean;
+		terserCompanion?: boolean;
+	};
+	copy?: {
+		destination: string;
+		files: string[];
+		clean?: boolean;
+	}[];
+	templatesHtml?: {
+		filename: string;
+		destination: string;
+		variables?: {
+			name: string;
+			type: string;
+			value: string | [ string, string ];
+		}[];
+	}[];
+	templatesJs?: {
+		filename: string;
+		destination: string;
+		output: 'esm' | 'cjs';
+	}[];
 }> = z.object( {
 	target: z.string(),
 	tsConfig: z.string(),
 	name: z.string().optional(),
 	prefix: z.string().optional(),
-	minify: tsMinifySchema.optional(),
-	copy: z.array( tsCopySchema ).optional(),
-	templatesHtml: z.array( tsHtmlTemplateSchema ).optional(),
-	templatesJs: z.array( tsJsTemplateSchema ).optional()
+	minify: z.object( {
+		files: z.array( z.string() ),
+		terser: z.union( [
+			z.boolean(),
+			z.object( {
+				enabled: z.boolean().optional(),
+				module: z.boolean().optional(),
+				toplevel: z.boolean().optional(),
+				mangle: z.union( [
+					z.literal( false ),
+					z.string().refine( ( value: string ): boolean => {
+						let returnValue: boolean = true;
+						try {
+							RegExp( value );
+						} catch {
+							returnValue = false;
+						}
+						return returnValue;
+					}, { message: 'Invalid regular expression' } )
+				] ).optional()
+			} ).strict()
+		] ).optional(),
+		terserCompanion: z.boolean().optional()
+	} ).strict().optional(),
+	copy: z.array(
+		z.object( {
+			destination: z.string(),
+			files: z.array( z.string() ),
+			clean: z.boolean().optional()
+		} ).strict()
+	).optional(),
+	templatesHtml: z.array(
+		z.object( {
+			filename: z.string(),
+			destination: z.string(),
+			variables: z.array(
+				z.object( {
+					name: z.string(),
+					type: z.string(),
+					value: z.union( [ z.string(), z.tuple( [ z.string(), z.string() ] ) ] )
+				} ).strict()
+			).optional()
+		} ).strict()
+	).optional(),
+	templatesJs: z.array(
+		z.object( {
+			filename: z.string(),
+			destination: z.string(),
+			output: z.enum( [ 'esm', 'cjs' ] )
+		} ).strict()
+	).optional()
 } ).strict();
 
 export type TsBuildItem = z.infer<typeof tsBuildItemSchema>;
@@ -199,6 +145,15 @@ export default class TsBuild {
 	public constructor( configDirectory: string ) {
 		this._configDirectory = configDirectory;
 	}
+
+	private static readonly _hashAlgorithmMap: Record<string, [ string, number? ]> = {
+		'hash-sha2-224': [ 'sha224' ],
+		'hash-sha3-224': [ 'sha3-224' ],
+		'hash-blake2s-256': [ 'blake2s256' ],
+		'hash-shake256-64': [ 'shake256', 8 ],
+		'hash-shake256-96': [ 'shake256', 12 ],
+		'hash-md5-128': [ 'md5' ]
+	};
 
 	public static compile( configPath: string ): void {
 		const absConfig: string = path.resolve( configPath );
@@ -258,7 +213,7 @@ export default class TsBuild {
 						? false
 						: { properties: { regex: RegExp( ( 'string' === typeof terserOptions.mangle ) ? terserOptions.mangle : defaultManglePattern ) } }
 				} );
-				if( tmpValue.code ) {
+				if( undefined !== tmpValue.code ) {
 					const tmpLength: number = Buffer.byteLength( tmpValue.code, 'utf8' );
 					ZeptoLogger.instance.log( LogLevel.INFO, `[MINIFY] Size> Terser         : ${ tmpLength }` );
 					if( tmpLength < compressed[ 1 ] ) {
@@ -280,19 +235,8 @@ export default class TsBuild {
 
 			ZeptoLogger.instance.log( LogLevel.INFO, `[MINIFY] Size> Output         : ${ compressed[ 1 ] }` );
 
-			if( compressed[ 0 ] != source ) {
-				await writeFile( outPath, compressed[ 0 ] );
-				returnValue = true;
-			} else {
-				try {
-					await unlink( outPath );
-				} catch( error: unknown ) {
-					if( 'ENOENT' !== ( error as { code?: string } ).code ) {
-						throw error;
-					}
-					// ignore only when absent generated output is to be removed
-				}
-			}
+			await writeFile( outPath, compressed[ 0 ] );
+			returnValue = true;
 		}
 		return returnValue;
 	}
@@ -338,17 +282,6 @@ export default class TsBuild {
 		return returnValue;
 	}
 
-	private static async _hashFile( variableType: TsHashVariableType, algorithm: string, absSource: string ): Promise<string> {
-		let returnValue: string = '';
-		if( getHashes().includes( algorithm ) ) {
-			const contents: Buffer = await readFile( absSource );
-			returnValue = createHash( algorithm ).update( contents ).digest( 'hex' );
-		} else {
-			throw new Error( `Hash algorithm "${ algorithm }" is unavailable for variable type "${ variableType }"` );
-		}
-		return returnValue;
-	}
-
 	private static _formatTupleToken( source: string, prefix: string, token: string | number ): string {
 		let returnValue: string = '';
 		const converted: string = prefix.replace( /\\/g, '/' );
@@ -365,36 +298,12 @@ export default class TsBuild {
 		return returnValue;
 	}
 
-	private static _resolveTerserConfig( terser: Undefinedable<TsTerser>, moduleDefault: boolean ): { enabled: boolean; options: TerserOptions } {
-		let returnValue: { enabled: boolean; options: TerserOptions };
-		const options: TerserOptions = { module: moduleDefault };
-		if( 'boolean' === typeof terser ) {
-			returnValue = { enabled: terser, options };
-		} else if( undefined !== terser ) {
-			if( undefined !== terser.module ) {
-				options.module = terser.module;
-			}
-			if( undefined !== terser.toplevel ) {
-				options.toplevel = terser.toplevel;
-			}
-			if( undefined !== terser.mangle ) {
-				options.mangle = terser.mangle;
-			}
-			returnValue = { enabled: terser.enabled ?? true, options };
-		} else {
-			returnValue = { enabled: true, options };
-		}
-		return returnValue;
-	}
-
 	public static async copy( absDestination: string, absFiles: string[], clean: boolean ): Promise<void> {
 		if( clean ) {
 			await rm( absDestination, { recursive: true, force: true } );
 		}
 		await mkdir( absDestination, { recursive: true } );
-		const cL1: number = absFiles.length;
-		for( let iL1: number = 0; iL1 < cL1; iL1++ ) {
-			const absFile: string = absFiles[ iL1 ];
+		for( const absFile of absFiles ) {
 			await copyFile( absFile, path.resolve( absDestination, path.basename( absFile ) ) );
 		}
 	}
@@ -416,7 +325,26 @@ export default class TsBuild {
 		const absConfig: string = path.resolve( targetDirectory, buildItem.tsConfig );
 		let minifyPlan: Undefinedable<{ enabled: boolean; options: TerserOptions; useTerserCompanion: boolean; files: string[]; }>;
 		if( buildItem.minify ) {
-			const terserResolved: { enabled: boolean; options: TerserOptions } = TsBuild._resolveTerserConfig( buildItem.minify.terser, true );
+			const terserResolved: { enabled: boolean; options: TerserOptions } = {
+				enabled: true,
+				options: {
+					module: true
+				}
+			};
+			if( 'boolean' == typeof buildItem.minify.terser ) {
+				terserResolved.enabled = buildItem.minify.terser;
+			} else if( buildItem.minify.terser ) {
+				terserResolved.enabled = buildItem.minify.terser.enabled ?? true;
+				if( undefined !== buildItem.minify.terser.module ) {
+					terserResolved.options.module = buildItem.minify.terser.module;
+				}
+				if( undefined !== buildItem.minify.terser.toplevel ) {
+					terserResolved.options.toplevel = buildItem.minify.terser.toplevel;
+				}
+				if( undefined !== buildItem.minify.terser.mangle ) {
+					terserResolved.options.mangle = buildItem.minify.terser.mangle;
+				}
+			}
 			minifyPlan = {
 				enabled: terserResolved.enabled,
 				options: terserResolved.options,
@@ -429,88 +357,91 @@ export default class TsBuild {
 		TsBuild.compile( absConfig );
 
 		if( buildItem.templatesJs ) {
-			const cL1: number = buildItem.templatesJs.length;
-			for( let iL1: number = 0; iL1 < cL1; iL1++ ) {
-				const template: TsJsTemplate = buildItem.templatesJs[ iL1 ];
-				const absTemplate: string = path.resolve( targetDirectory, template.filename );
-				const absDestination: string = path.resolve( this._configDirectory, template.destination );
+			for( const { filename, destination, output } of buildItem.templatesJs ) {
+				const absTemplate: string = path.resolve( targetDirectory, filename );
+				const absDestination: string = path.resolve( this._configDirectory, destination );
 				const templateSource: string = await readFile( absTemplate, 'utf8' );
 				const compiled: string = new jTDAL().CompileToString( templateSource );
-				const moduleSource: string = ( 'esm' === template.output ) ? `export default ${ compiled }` : `module.exports = ${ compiled };`;
+				const moduleSource: string = ( 'esm' === output ) ? `export default ${ compiled }` : `module.exports = ${ compiled };`;
 				const parsedPath: path.ParsedPath = path.parse( absTemplate );
-				const outputName: string = ( 'esm' === template.output ) ? `${ parsedPath.name }.mjs` : `${ parsedPath.name }.cjs`;
+				const outputName: string = ( 'esm' === output ) ? `${ parsedPath.name }.mjs` : `${ parsedPath.name }.cjs`;
 				await mkdir( absDestination, { recursive: true } );
 				await writeFile( path.resolve( absDestination, outputName ), moduleSource, 'utf8' );
 			}
 		}
 
 		if( minifyPlan && ( minifyPlan.enabled || minifyPlan.useTerserCompanion ) ) {
-			const cL1: number = minifyPlan.files.length;
-			for( let iL1: number = 0; iL1 < cL1; iL1++ ) {
-				const absFile: string = path.resolve( targetDirectory, minifyPlan.files[ iL1 ] );
+			for( const file of minifyPlan.files ) {
+				const absFile: string = path.resolve( targetDirectory, file );
 				ZeptoLogger.instance.log( LogLevel.INFO, `[${ targetLabel }] Minifying ${ path.relative( this._configDirectory, absFile ) }...` );
 				await TsBuild.minify( absFile, minifyPlan.enabled, minifyPlan.useTerserCompanion, minifyPlan.options );
 			}
 		}
 
 		if( buildItem.copy ) {
-			const cL1: number = buildItem.copy.length;
-			for( let iL1: number = 0; iL1 < cL1; iL1++ ) {
-				const copy: { destination: string; files: string[]; clean?: boolean; } = buildItem.copy[ iL1 ];
-				const absDestination: string = path.resolve( this._configDirectory, copy.destination );
+			for( const { destination, files, clean } of buildItem.copy ) {
+				const absDestination: string = path.resolve( this._configDirectory, destination );
 				const absFiles: string[] = [];
-				const cL2: number = copy.files.length;
-				for( let iL2: number = 0; iL2 < cL2; iL2++ ) {
-					absFiles[ iL2 ] = path.resolve( targetDirectory, copy.files[ iL2 ] );
+				for( const file of files ) {
+					absFiles.push( path.resolve( targetDirectory, file ) );
 				}
-				await TsBuild.copy( absDestination, absFiles, copy.clean ?? false );
+				await TsBuild.copy( absDestination, absFiles, clean ?? false );
 			}
 		}
 
 		if( buildItem.templatesHtml ) {
-			const cL1: number = buildItem.templatesHtml.length;
-			for( let iL1: number = 0; iL1 < cL1; iL1++ ) {
-				const template: TsHtmlTemplate = buildItem.templatesHtml[ iL1 ];
-				const absTemplate: string = path.resolve( targetDirectory, template.filename );
-				const absDestination: string = path.resolve( this._configDirectory, template.destination );
-				const variables: Record<string, string | number> = {};
-				const templateVariables: TsVariable[] = template.variables ?? [];
-				const cL2: number = templateVariables.length;
-				for( let iL2: number = 0; iL2 < cL2; iL2++ ) {
-					const variable: TsVariable = templateVariables[ iL2 ];
-					switch( variable.type ) {
-						case 'string': {
-							variables[ variable.name ] = variable.value;
-							break;
-						}
-						case 'mtime': {
-							if( 'string' === typeof variable.value ) {
-								variables[ variable.name ] = ( await stat( path.resolve( targetDirectory, variable.value ) ) ).mtime.getTime();
-							} else {
-								const sourcePath: string = variable.value[ 0 ];
-								const prefix: string = variable.value[ 1 ];
-								const timestamp: number = ( await stat( path.resolve( targetDirectory, sourcePath ) ) ).mtime.getTime();
-								variables[ variable.name ] = TsBuild._formatTupleToken( sourcePath, prefix, timestamp );
+			for( const { filename, destination, variables } of buildItem.templatesHtml ) {
+				const absTemplate: string = path.resolve( targetDirectory, filename );
+				const absDestination: string = path.resolve( this._configDirectory, destination );
+				const variablesResolved: Record<string, string | number> = {};
+				if( variables ) {
+					for( const { name, type, value } of variables ) {
+						switch( type ) {
+							case 'string': {
+								if( 'string' == typeof value ) {
+									variablesResolved[ name ] = value;
+								} else {
+									throw new Error( `Unexpected value for variable type "${ type }"` );
+								}
+								break;
 							}
-							break;
-						}
-						case 'hash-sha2-224':
-						case 'hash-sha3-224':
-						case 'hash-blake2s-256': {
-							const algorithm: string = hashAlgorithmMap[ variable.type ];
-							if( 'string' === typeof variable.value ) {
-								variables[ variable.name ] = await TsBuild._hashFile( variable.type, algorithm, path.resolve( targetDirectory, variable.value ) );
-							} else {
-								const sourcePath: string = variable.value[ 0 ];
-								const prefix: string = variable.value[ 1 ];
-								const digest: string = await TsBuild._hashFile( variable.type, algorithm, path.resolve( targetDirectory, sourcePath ) );
-								variables[ variable.name ] = TsBuild._formatTupleToken( sourcePath, prefix, digest );
+							case 'mtime': {
+								const source: string = ( ( 'string' == typeof value ) ? value : value[ 0 ] );
+								const mtime: number = ( await stat( path.resolve( targetDirectory, source ) ) ).mtime.getTime();
+								const mtimeB64 : string = Buffer.from( BigInt( mtime ).toString( 16 ).padStart( 16, '0' ), 'hex' ).toString( 'base64url' );
+								variablesResolved[ name ] = ( 'string' == typeof value ) ? mtime : TsBuild._formatTupleToken( source, value[ 1 ], mtimeB64 );
+								break;
 							}
-							break;
+							case 'hash-sha2-224':
+							case 'hash-sha3-224':
+							case 'hash-blake2s-256':
+							case 'hash-shake256-64':
+							case 'hash-shake256-96':
+							case 'hash-md5-128': {
+								const [ algorithm, outputLength ] : [ string, number? ] = TsBuild._hashAlgorithmMap[ type ];
+								if( getHashes().includes( algorithm ) ) {
+									const source: string = path.resolve( targetDirectory, ( ( 'string' == typeof value ) ? value : value[ 0 ] ) );
+									const contents: Buffer = await readFile( source );
+									const hash: Hash = createHash(
+										algorithm,
+										(
+											( 'undefined' != typeof outputLength ) ? { outputLength: outputLength } : undefined
+										)
+									);
+									const digest: string = hash.update( contents ).digest( 'base64url' );
+									variablesResolved[ name ] = ( 'string' == typeof value ) ? digest : TsBuild._formatTupleToken( source, value[ 1 ], digest );
+								} else {
+									throw new Error( `Hash algorithm "${ algorithm }" is unavailable for variable type "${ type }"` );
+								}
+								break;
+							}
+							default: {
+								throw new Error( `Unsupported variable type "${ type }"` );
+							}
 						}
 					}
 				}
-				await TsBuild.templating( absTemplate, absDestination, variables );
+				await TsBuild.templating( absTemplate, absDestination, variablesResolved );
 			}
 		}
 

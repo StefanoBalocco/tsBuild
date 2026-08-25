@@ -76,6 +76,21 @@
 						"name": "bundle_blake",
 						"type": "hash-blake2s-256",
 						"value": "dist/app.js"
+					},
+					{
+						"name": "bundle_shake64",
+						"type": "hash-shake256-64",
+						"value": "dist/app.js"
+					},
+					{
+						"name": "bundle_shake96",
+						"type": "hash-shake256-96",
+						"value": [ "dist/app.js", "assets" ]
+					},
+					{
+						"name": "bundle_md5",
+						"type": "hash-md5-128",
+						"value": "dist/app.js"
 					}
 				]
 			}

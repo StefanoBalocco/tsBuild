@@ -11,6 +11,9 @@
 					{ "name": "hash_sha2", "type": "hash-sha2-224", "value": "assets/abc" },
 					{ "name": "hash_sha3", "type": "hash-sha3-224", "value": "assets/abc" },
 					{ "name": "hash_blake2s", "type": "hash-blake2s-256", "value": "assets/abc" },
+					{ "name": "hash_shake64", "type": "hash-shake256-64", "value": "assets/abc" },
+					{ "name": "hash_shake96", "type": "hash-shake256-96", "value": "assets/abc" },
+					{ "name": "hash_md5", "type": "hash-md5-128", "value": "assets/abc" },
 					{ "name": "hash_binary", "type": "hash-sha2-224", "value": "assets/binary.bin" },
 					{ "name": "mtime_string", "type": "mtime", "value": "assets/abc" },
 					{ "name": "mtime_tuple", "type": "mtime", "value": [ "assets/abc", "this/is/a/prefix" ] },
@@ -18,6 +21,9 @@
 					{ "name": "hash_tuple_sha2", "type": "hash-sha2-224", "value": [ "assets/abc", "this/is/a/prefix" ] },
 					{ "name": "hash_tuple_sha3", "type": "hash-sha3-224", "value": [ "assets/abc", "this/is/a/prefix" ] },
 					{ "name": "hash_tuple_blake2s", "type": "hash-blake2s-256", "value": [ "assets/abc", "this/is/a/prefix" ] },
+					{ "name": "hash_tuple_shake64", "type": "hash-shake256-64", "value": [ "assets/abc", "this/is/a/prefix" ] },
+					{ "name": "hash_tuple_shake96", "type": "hash-shake256-96", "value": [ "assets/abc", "this/is/a/prefix" ] },
+					{ "name": "hash_tuple_md5", "type": "hash-md5-128", "value": [ "assets/abc", "this/is/a/prefix" ] },
 					{ "name": "hash_tuple_empty", "type": "hash-sha2-224", "value": [ "assets/abc", "" ] },
 					{ "name": "hash_tuple_binary", "type": "hash-sha2-224", "value": [ "assets/binary.bin", "this/is/a/prefix" ] }
 				]

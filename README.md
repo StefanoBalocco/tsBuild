@@ -83,7 +83,7 @@ Create a `tsBuild.json` file (or any JSON file) with an array of target objects:
 | `minify.terser` | `boolean` or object | `true` when `minify` exists | Enable Terser. Boolean form controls only `enabled`. Object form: `enabled`, `module`, `toplevel`, `mangle` (see below) |
 | `minify.terserCompanion` | `boolean` | `true` when `minify` exists | Enable TerserCompanion optimization |
 | `copy` | `object[]` | — | Asset copy operations. Each entry: `destination` (config-root directory), `files` (prefix-relative source file paths — individual files only, each copied to `destination/path.basename(file)`), `clean` (boolean, default false — when true, recreates destination before copy) |
-| `templatesHtml` | `object[]` | — | jTDAL HTML template rendering. Each entry: `filename` (prefix-relative source), `destination` (config-root directory), `variables` (optional; array of `{ name, type, value }` where `type` is one of `string`, `mtime`, `hash-sha2-224`, `hash-sha3-224`, `hash-blake2s-256`) |
+| `templatesHtml` | `object[]` | — | jTDAL HTML template rendering. Each entry: `filename` (prefix-relative source), `destination` (config-root directory), `variables` (optional; array of `{ name, type, value }` where `type` is one of `string`, `mtime`, `hash-sha2-224`, `hash-sha3-224`, `hash-blake2s-256`, `hash-shake256-64`, `hash-shake256-96`, `hash-md5-128`) |
 | `templatesJs` | `object[]` | — | jTDAL renderer module generation. Each entry: `filename` (prefix-relative source), `destination` (config-root directory), `output` (`"esm"` or `"cjs"`, required). Modules are written unminified; list their generated `.mjs`/`.cjs` paths under `minify.files` to produce `.min.mjs`/`.min.cjs` siblings |
 
 Per-target operation order: Compile TypeScript → Render templatesJs → Minify → Copy files → Render templatesHtml → `✓ Built.` log.
@@ -93,17 +93,24 @@ Per-target operation order: Compile TypeScript → Render templatesJs → Minify
 - All `destination` paths resolve from the configuration directory only; the prefix is never appended.
 - Template and copy output filenames use `path.basename()` of the source file. Each `copy.files` entry is an individual file (directory entries are not supported); it is copied to `destination/path.basename(file)`.
 
-**Template variables:** `variables` are resolved only for HTML templates (`templatesHtml`); `templatesJs` continues to reject them. Five types are supported:
+**Template variables:** `variables` are resolved only for HTML templates (`templatesHtml`); `templatesJs` continues to reject them. Exactly eight variable types are resolved at build time:
 
 | Type | `value` | Rendered |
 |------|---------|----------|
 | `string` | a string | the string verbatim |
 | `mtime` | a source string or `[ source, prefix ]` | whole-millisecond `fs.stat().mtime.getTime()` |
-| `hash-sha2-224` | a source string or `[ source, prefix ]` | lower-case hex SHA-224 of the source's raw bytes |
-| `hash-sha3-224` | a source string or `[ source, prefix ]` | lower-case hex SHA3-224 of the source's raw bytes |
-| `hash-blake2s-256` | a source string or `[ source, prefix ]` | lower-case hex BLAKE2s-256 of the source's raw bytes |
+| `hash-sha2-224` | a source string or `[ source, prefix ]` | unpadded RFC 4648 base64url SHA-224 of the source's raw bytes (28 bytes, 38 chars) |
+| `hash-sha3-224` | a source string or `[ source, prefix ]` | unpadded RFC 4648 base64url SHA3-224 of the source's raw bytes (28 bytes, 38 chars) |
+| `hash-blake2s-256` | a source string or `[ source, prefix ]` | unpadded RFC 4648 base64url BLAKE2s-256 of the source's raw bytes (32 bytes, 43 chars) |
+| `hash-shake256-64` | a source string or `[ source, prefix ]` | unpadded RFC 4648 base64url SHAKE256 of the source's raw bytes, 8 bytes (11 chars) |
+| `hash-shake256-96` | a source string or `[ source, prefix ]` | unpadded RFC 4648 base64url SHAKE256 of the source's raw bytes, 12 bytes (16 chars) |
+| `hash-md5-128` | a source string or `[ source, prefix ]` | unpadded RFC 4648 base64url MD5 of the source's raw bytes (16 bytes, 22 chars) |
 
-A string `value` renders the direct token: the numeric mtime or the hex digest. A `[ source, prefix ]` tuple renders a URL token: `basename?TOKEN` when the prefix is empty, otherwise `prefix/basename?TOKEN`. The prefix is output-only and never affects which source file is read. Backslashes in the prefix become `/`; a leading `/` is preserved; trailing `/` characters are removed; internal slashes are unchanged. Hashes use the runtime `crypto.getHashes()` set — an unavailable algorithm fails the build/CLI error path. Missing source files retain the raw filesystem error.
+A string `value` renders the direct token: the numeric mtime or the unpadded RFC 4648 base64url digest. A `[ source, prefix ]` tuple renders a URL token: `basename?TOKEN` when the prefix is empty, otherwise `prefix/basename?TOKEN`. The prefix is output-only and never affects which source file is read. Backslashes in the prefix become `/`; a leading `/` is preserved; trailing `/` characters are removed; internal slashes are unchanged. Digests come from Node's `crypto.createHash()`. The mapped algorithm is checked against `getHashes()` first; if absent, the build/CLI throws `Hash algorithm "<algorithm>" is unavailable for variable type "<type>"`. A native `createHash()` error propagates only in runtimes where OpenSSL rejects the algorithm during hash creation. Missing source files retain the raw filesystem error.
+
+These hashes identify file changes for cache busting, not integrity or authentication; MD5 may fail on runtimes where OpenSSL rejects it during hash creation, such as FIPS-enabled Node/OpenSSL.
+
+The Zod schema validates the structural shape of each variable — `name`, `type`, and `value` (a string or a `[ source, prefix ]` tuple). An unsupported `type` is not a schema diagnostic: it is rejected during the HTML-template build with an error.
 
 ### Terser options
 
@@ -142,7 +149,7 @@ JS template modules are written unminified; there is no per-template minificatio
 
 ### Config validation
 
-The config file is validated against a strict Zod schema before any build step. Unknown keys are rejected at every level, `mangle` must be `false` or valid regular expression text, and target identifiers must be unique. Each variable's `type` must be one of the five supported values and its `value` must be a string (for `string`) or a string or `[ source, prefix ]` tuple (for `mtime` and hashes); an unknown `type` is reported at the `.type` path. Each violation fails the CLI run with exit code 1 and one error line per issue, with the full path to the offending field:
+The config file is validated against a strict Zod schema before any build step. Unknown keys are rejected at every level, `mangle` must be `false` or valid regular expression text, and target identifiers must be unique. The schema validates the structural shape of each variable — `name`, `type`, and `value` (a string or a `[ source, prefix ]` tuple). An unsupported `type` is rejected during the HTML-template build with an error, not reported as a Zod `.type` diagnostic. Schema-validation violations fail the CLI run with exit code 1 and one error line per issue, each with the full path to the offending field:
 
 ```
 Invalid tsBuild configuration:
@@ -151,6 +158,8 @@ Invalid tsBuild configuration:
 ```
 
 Malformed JSON is reported the same way: the logged error message includes `Invalid tsBuild configuration:` (followed by the parser message), and the CLI returns exit code 1.
+
+Runtime build failures — an unsupported variable `type` or a tuple `value` for a `string` variable — report their runtime message and exit 1; they carry no field path.
 
 ## CLI
 
@@ -193,10 +202,7 @@ type TsBuildItem = {
 	templatesHtml?: {
 		filename: string;
 		destination: string;
-		variables?: (
-			{ name: string; type: 'string'; value: string } |
-			{ name: string; type: 'mtime' | 'hash-sha2-224' | 'hash-sha3-224' | 'hash-blake2s-256'; value: string | [ string, string ] }
-		)[];
+		variables?: { name: string; type: string; value: string | [ string, string ] }[];
 	}[];
 	templatesJs?: {
 		filename: string;
@@ -235,9 +241,7 @@ Compile TypeScript using the compiler API. Throws on diagnostic errors.
 
 ### `TsBuild.minify( absPath: string, useTerser: boolean, useTerserCompanion: boolean, terserOptions?: TerserOptions ): Promise<boolean>`
 
-Minify a single JS file. Writes minified output as a sibling file named with `.min` before the original extension: `index.js` → `index.min.js`, `lib.mjs` → `lib.min.mjs`, `lib.cjs` → `lib.min.cjs`. Returns `true` only when the best enabled transformation is strictly smaller than the source in UTF-8 byte length. Terser runs first; TerserCompanion receives the current best (the source when Terser did not strictly shrink). Each result is selected only on a strict byte-length reduction. Empty, equal, or larger results are no gain: `minify` returns `false` and deletes any existing sibling `.min` file, ignoring only `ENOENT`; the source remains unchanged. When both transformations are disabled, `minify` is a no-op and returns `false`. `terserOptions` defaults to `{ module: true, mangle: "^_" }`; `toplevel` defaults to `false`.
-
-**Warning:** Configurations or downstream steps that reference a `.min` file must tolerate `ENOENT` when minification produces no smaller output. Reference the original file when a guaranteed path is required.
+Minify a single JS file. Writes minified output as a sibling file named with `.min` before the original extension: `index.js` → `index.min.js`, `lib.mjs` → `lib.min.mjs`, `lib.cjs` → `lib.min.cjs`. Terser runs first; TerserCompanion receives the current best (the source when Terser did not shrink). Each result is selected only on a strict UTF-8 byte-length reduction, so the smallest candidate wins. Enabled minification always writes the `.min` sibling — even when no transform shrinks the source — and returns `true` when it writes it. An empty source produces an empty `.min` sibling. When both transformations are disabled, `minify` is a no-op and returns `false`. `terserOptions` defaults to `{ module: true, mangle: "^_" }`; `toplevel` defaults to `false`.
 
 ### `TsBuild.copy( absDestination: string, absFiles: string[], clean: boolean ): Promise<void>`
 

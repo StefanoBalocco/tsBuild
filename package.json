@@ -1,6 +1,6 @@
 {
 	"name": "@stefanobalocco/tsbuild",
-	"version": "2.1.0",
+	"version": "2.1.1",
 	"description": "Build TypeScript targets and minify their JavaScript output.",
 	"type": "module",
 	"engines": {
@@ -49,7 +49,7 @@
 		"zod": "^4.4.3"
 	},
 	"devDependencies": {
-		"@stefanobalocco/tsbuild": "^1",
+		"@stefanobalocco/tsbuild": "^2.1.0",
 		"@types/node": "^24",
 		"ava": "^8",
 		"c8": "^12"

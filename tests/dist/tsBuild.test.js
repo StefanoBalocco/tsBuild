@@ -70,9 +70,12 @@ async function runCliWithCapturedLog(argumentsInput) {
     }
     return returnValue;
 }
-const abcSha224 = '23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7';
-const abcSha3_224 = 'e642824c3f8cf24ad09234ee7d3c766fc9a3a5168d0c94ad73b46fdf';
-const abcBlake2s256 = '508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982';
+const abcSha224 = 'Iwl9IjQF2CKGQqR3vaJVsyqtvOS9oLP342ydpw';
+const abcSha3_224 = '5kKCTD-M8krQkjTufTx2b8mjpRaNDJStc7Rv3w';
+const abcBlake2s256 = 'UIxejDJ8FOLhpyujTutFLzdFiyCe1jopTZmbTIZnWYI';
+const abcShake256_64 = 'SDNmYBNgqHc';
+const abcShake256_96 = 'SDNmYBNgqHccaGMI';
+const abcMd5_128 = 'kAFQmDzST7DWlj99KOF_cg';
 async function renderedValue(workspace, relPath, variableName) {
     const html = await readFile(path.join(workspace, relPath), 'utf8');
     const match = html.match(new RegExp(`${variableName}=\\[<span>([^<]*)<\\/span>\\]`));
@@ -193,7 +196,7 @@ test.serial('minify on extensionless file writes sibling .min and leaves origina
     const originalContent = await readFile(sourcePath, 'utf8');
     t.is(originalContent, 'export const version = "1.0.0";\n');
 });
-test.serial('minify on comments-only .js removes stale .min.js and returns false', async (t) => {
+test.serial('minify on comments-only .js writes an empty .min sibling', async (t) => {
     const ws = await createWorkspace('minify');
     const sourcePath = path.join(ws, 'dist/empty.js');
     const minPath = path.join(ws, 'dist/empty.min.js');
@@ -201,12 +204,13 @@ test.serial('minify on comments-only .js removes stale .min.js and returns false
     await writeFile(sourcePath, '// just a comment\n/* another one */\n');
     await writeFile(minPath, 'stale content\n');
     const result = await TsBuild.minify(sourcePath, true, false);
-    t.false(result);
+    t.true(result);
     t.true(await exists(sourcePath));
     t.is(await readFile(sourcePath, 'utf8'), '// just a comment\n/* another one */\n');
-    t.false(await exists(minPath));
+    t.true(await exists(minPath));
+    t.is(await readFile(minPath, 'utf8'), '');
 });
-test.serial('minify with both transforms on comments-only source returns false and removes stale .min.js', async (t) => {
+test.serial('minify with both transforms on comments-only source writes an empty .min sibling', async (t) => {
     const ws = await createWorkspace('minify');
     const sourcePath = path.join(ws, 'dist/empty.js');
     const minPath = path.join(ws, 'dist/empty.min.js');
@@ -214,11 +218,12 @@ test.serial('minify with both transforms on comments-only source returns false a
     await writeFile(sourcePath, '// just a comment\n/* another one */\n');
     await writeFile(minPath, 'stale content\n');
     const result = await TsBuild.minify(sourcePath, true, true);
-    t.false(result);
+    t.true(result);
     t.is(await readFile(sourcePath, 'utf8'), '// just a comment\n/* another one */\n');
-    t.false(await exists(minPath));
+    t.true(await exists(minPath));
+    t.is(await readFile(minPath, 'utf8'), '');
 });
-test.serial('minify returns false and removes stale .min.js when Terser output is larger than source', async (t) => {
+test.serial('minify writes the .min sibling with the source content when Terser output is larger than source', async (t) => {
     const ws = await createWorkspace('minify');
     const sourcePath = path.join(ws, 'dist/larger.js');
     const minPath = path.join(ws, 'dist/larger.min.js');
@@ -236,8 +241,9 @@ test.serial('minify returns false and removes stale .min.js when Terser output i
     t.true(0 < terserOutput.length);
     t.true(Buffer.byteLength(source, 'utf8') < Buffer.byteLength(terserOutput, 'utf8'));
     const result = await TsBuild.minify(sourcePath, true, false);
-    t.false(result);
-    t.false(await exists(minPath));
+    t.true(result);
+    t.true(await exists(minPath));
+    t.is(await readFile(minPath, 'utf8'), source);
     t.is(await readFile(sourcePath, 'utf8'), source);
 });
 test.serial('minify selects Terser output by UTF-8 byte length even when it has more characters than the source', async (t) => {
@@ -270,9 +276,9 @@ test.serial('minify with no gain still renders the tuple hash from the surviving
     const minPath = path.join(workspace, 'project/assets/no-gain.min.js');
     await buildItem(workspace, 'tsBuild.json', 'lib');
     t.true(await exists(sourcePath));
-    t.false(await exists(minPath));
+    t.true(await exists(minPath));
     const source = await readFile(sourcePath);
-    const expectedDigest = createHash('sha224').update(source).digest('hex');
+    const expectedDigest = createHash('sha224').update(source).digest('base64url');
     t.is(await renderedValue(workspace, 'out/token.html', 'token'), `assets/no-gain.js?${expectedDigest}`);
 });
 test.serial('default copy and templatesHtml resolve prefix sources and config-root destinations', async (t) => {
@@ -337,7 +343,7 @@ test.serial('compile throws on type diagnostics', async (t) => {
     await writeFile(path.join(ws, 'src/index.ts'), 'const value: number = \'wrong\';\n');
     t.throws(() => TsBuild.compile(path.join(ws, 'tsconfig.json')));
 });
-test.serial('minify on comments-only .js rethrows EISDIR from unlink when output path is a directory', async (t) => {
+test.serial('minify rethrows EISDIR from writing the .min output when the output path is a directory', async (t) => {
     const ws = await createWorkspace('minify');
     const sourcePath = path.join(ws, 'dist/dirpath.js');
     const dirPath = path.join(ws, 'dist/dirpath.min.js');
@@ -347,15 +353,48 @@ test.serial('minify on comments-only .js rethrows EISDIR from unlink when output
     const error = await t.throwsAsync(async () => TsBuild.minify(sourcePath, true, false));
     t.is(error.code, 'EISDIR');
 });
-test.serial('minify on absent .min file catches ENOENT from unlink', async (t) => {
+test.serial('minify on absent .min file writes the .min sibling', async (t) => {
     const ws = await createWorkspace('minify');
     const sourcePath = path.join(ws, 'dist/absent.js');
     const minPath = path.join(ws, 'dist/absent.min.js');
     await mkdir(path.dirname(sourcePath), { recursive: true });
     await writeFile(sourcePath, '// just a comment\n/* another one */\n');
     const result = await TsBuild.minify(sourcePath, true, false);
-    t.false(result);
-    t.false(await exists(minPath));
+    t.true(result);
+    t.true(await exists(minPath));
+});
+test.serial('minify on empty .js writes an empty .min sibling and returns true', async (t) => {
+    const ws = await createWorkspace('minify');
+    const sourcePath = path.join(ws, 'dist/blank.js');
+    const minPath = path.join(ws, 'dist/blank.min.js');
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(sourcePath, '');
+    const result = await TsBuild.minify(sourcePath, true, true);
+    t.true(result);
+    t.true(await exists(minPath));
+    t.is(await readFile(minPath, 'utf8'), '');
+});
+test.serial('minify with Terser only on empty .js writes an empty .min sibling and returns true', async (t) => {
+    const ws = await createWorkspace('minify');
+    const sourcePath = path.join(ws, 'dist/blank-terser.js');
+    const minPath = path.join(ws, 'dist/blank-terser.min.js');
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(sourcePath, '');
+    const result = await TsBuild.minify(sourcePath, true, false);
+    t.true(result);
+    t.true(await exists(minPath));
+    t.is(await readFile(minPath, 'utf8'), '');
+});
+test.serial('minify with TerserCompanion only on empty .js writes an empty .min sibling and returns true', async (t) => {
+    const ws = await createWorkspace('minify');
+    const sourcePath = path.join(ws, 'dist/blank-companion.js');
+    const minPath = path.join(ws, 'dist/blank-companion.min.js');
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(sourcePath, '');
+    const result = await TsBuild.minify(sourcePath, false, true);
+    t.true(result);
+    t.true(await exists(minPath));
+    t.is(await readFile(minPath, 'utf8'), '');
 });
 test.serial('minify picks companion when its output is strictly smaller', async (t) => {
     const ws = await createWorkspace('minify');
@@ -656,6 +695,23 @@ test.serial('object-form terser config minifies with mangle false preserving und
     const minContent = await readFile(minPath, 'utf8');
     t.true(minContent.includes('_private'));
 });
+test.serial('object-form terser config with enabled false and companion false writes no .min sibling', async (t) => {
+    const ws = await createWorkspace('minify');
+    await writeFile(path.join(ws, 'object-disabled.json'), JSON.stringify([
+        {
+            target: 'lib',
+            tsConfig: 'tsconfig.json',
+            minify: {
+                files: ['dist/index.js'],
+                terser: { enabled: false },
+                terserCompanion: false
+            }
+        }
+    ]));
+    await buildItem(ws, 'object-disabled.json', 'lib');
+    t.true(await exists(path.join(ws, 'dist/index.js')));
+    t.false(await exists(path.join(ws, 'dist/index.min.js')));
+});
 test.serial('object-form terser config: toplevel false (the CJS default) retains unused helper, configured mangle regex renames customPrivate', async (t) => {
     const source = [
         'function unusedHelper() { return 42; }',
@@ -774,18 +830,28 @@ test.serial('html template without variables renders basename with empty data', 
     const html = await readFile(pagePath, 'utf8');
     t.true(html.includes('<h1></h1>'));
 });
-test.serial('direct hash variables render lower-case hex digests of source raw bytes', async (t) => {
+test.serial('direct hash variables render unpadded base64url digests of source raw bytes', async (t) => {
     const ws = await createWorkspace('hash-variables');
     await buildItem(ws, 'tsBuild.json', 'lib');
     t.is(await renderedValue(ws, 'out/page.html', 'hash_sha2'), abcSha224);
     t.is(await renderedValue(ws, 'out/page.html', 'hash_sha3'), abcSha3_224);
     t.is(await renderedValue(ws, 'out/page.html', 'hash_blake2s'), abcBlake2s256);
+    t.is(await renderedValue(ws, 'out/page.html', 'hash_shake64'), abcShake256_64);
+    t.is(await renderedValue(ws, 'out/page.html', 'hash_shake96'), abcShake256_96);
+    t.is(await renderedValue(ws, 'out/page.html', 'hash_md5'), abcMd5_128);
+    t.is(abcShake256_64.length, 11);
+    t.is(abcShake256_96.length, 16);
+    t.is(abcMd5_128.length, 22);
+    const base64urlAlphabet = /^[A-Za-z0-9_-]+$/;
+    t.true(base64urlAlphabet.test(abcShake256_64));
+    t.true(base64urlAlphabet.test(abcShake256_96));
+    t.true(base64urlAlphabet.test(abcMd5_128));
 });
 test.serial('direct hash variable digests raw bytes of a binary source', async (t) => {
     const ws = await createWorkspace('hash-variables');
     await buildItem(ws, 'tsBuild.json', 'lib');
     const binaryBuffer = await readFile(path.join(ws, 'project/assets/binary.bin'));
-    const expectedDigest = createHash('sha224').update(binaryBuffer).digest('hex');
+    const expectedDigest = createHash('sha224').update(binaryBuffer).digest('base64url');
     t.is(await renderedValue(ws, 'out/page.html', 'hash_binary'), expectedDigest);
 });
 test.serial('string-form mtime renders the whole-millisecond mtime', async (t) => {
@@ -798,13 +864,15 @@ test.serial('tuple-form mtime renders prefix/basename?mtime', async (t) => {
     const ws = await createWorkspace('hash-variables');
     await buildItem(ws, 'tsBuild.json', 'lib');
     const abcStat = await stat(path.join(ws, 'project/assets/abc'));
-    t.is(await renderedValue(ws, 'out/page.html', 'mtime_tuple'), `this/is/a/prefix/abc?${abcStat.mtime.getTime()}`);
+    const mtimeB64 = Buffer.from(BigInt(abcStat.mtime.getTime()).toString(16).padStart(16, '0'), 'hex').toString('base64url');
+    t.is(await renderedValue(ws, 'out/page.html', 'mtime_tuple'), `this/is/a/prefix/abc?${mtimeB64}`);
 });
 test.serial('tuple-form mtime with an empty prefix renders basename?mtime', async (t) => {
     const ws = await createWorkspace('hash-variables');
     await buildItem(ws, 'tsBuild.json', 'lib');
     const abcStat = await stat(path.join(ws, 'project/assets/abc'));
-    t.is(await renderedValue(ws, 'out/page.html', 'mtime_tuple_empty'), `abc?${abcStat.mtime.getTime()}`);
+    const mtimeB64 = Buffer.from(BigInt(abcStat.mtime.getTime()).toString(16).padStart(16, '0'), 'hex').toString('base64url');
+    t.is(await renderedValue(ws, 'out/page.html', 'mtime_tuple_empty'), `abc?${mtimeB64}`);
 });
 test.serial('tuple-form hash renders prefix/basename?digest', async (t) => {
     const ws = await createWorkspace('hash-variables');
@@ -820,7 +888,7 @@ test.serial('tuple output is based on the target-relative source, not the output
     const ws = await createWorkspace('hash-variables');
     await buildItem(ws, 'tsBuild.json', 'lib');
     const binaryBuffer = await readFile(path.join(ws, 'project/assets/binary.bin'));
-    const expectedDigest = createHash('sha224').update(binaryBuffer).digest('hex');
+    const expectedDigest = createHash('sha224').update(binaryBuffer).digest('base64url');
     t.is(await renderedValue(ws, 'out/page.html', 'hash_tuple_binary'), `this/is/a/prefix/binary.bin?${expectedDigest}`);
 });
 test.serial('tuple output prefix preserves a leading slash and strips trailing slashes', async (t) => {
@@ -845,6 +913,21 @@ test.serial('tuple-form blake2s hash renders prefix/basename?digest', async (t) 
     await buildItem(ws, 'tsBuild.json', 'lib');
     t.is(await renderedValue(ws, 'out/page.html', 'hash_tuple_blake2s'), `this/is/a/prefix/abc?${abcBlake2s256}`);
 });
+test.serial('tuple-form shake256-64 hash renders prefix/basename?digest', async (t) => {
+    const ws = await createWorkspace('hash-variables');
+    await buildItem(ws, 'tsBuild.json', 'lib');
+    t.is(await renderedValue(ws, 'out/page.html', 'hash_tuple_shake64'), `this/is/a/prefix/abc?${abcShake256_64}`);
+});
+test.serial('tuple-form shake256-96 hash renders prefix/basename?digest', async (t) => {
+    const ws = await createWorkspace('hash-variables');
+    await buildItem(ws, 'tsBuild.json', 'lib');
+    t.is(await renderedValue(ws, 'out/page.html', 'hash_tuple_shake96'), `this/is/a/prefix/abc?${abcShake256_96}`);
+});
+test.serial('tuple-form md5 hash renders prefix/basename?digest', async (t) => {
+    const ws = await createWorkspace('hash-variables');
+    await buildItem(ws, 'tsBuild.json', 'lib');
+    t.is(await renderedValue(ws, 'out/page.html', 'hash_tuple_md5'), `this/is/a/prefix/abc?${abcMd5_128}`);
+});
 test.serial('tuple output prefix keeps internal repeated slashes unchanged', async (t) => {
     const ws = await createWorkspace('hash-variables');
     await buildItem(ws, 'repeated.json', 'lib');
@@ -861,20 +944,25 @@ test.serial('runCli builds the hash-variables target via the public CLI path', a
     t.is(exitCode, 0);
     t.true(await exists(path.join(ws, 'out/page.html')));
 });
-test.serial('_hashFile throws a clear message when the mapped algorithm is unavailable', async (t) => {
-    const ws = await createWorkspace('hash-variables');
-    const privateTsBuild = TsBuild;
-    const error = await t.throwsAsync(async () => privateTsBuild._hashFile('hash-blake2s-256', 'blake2s224', path.join(ws, 'project/assets/nonexistent.txt')));
-    t.true(error.message.includes('blake2s224'));
-    t.true(error.message.includes('hash-blake2s-256'));
-    t.false(error.message.includes('ENOENT'));
-});
 test.serial('hash variable with missing source propagates the fs ENOENT error', async (t) => {
     const ws = await createWorkspace('hash-variables');
     const error = await t.throwsAsync(async () => buildItem(ws, 'missing.json', 'lib'));
     t.is(error.code, 'ENOENT');
 });
-test.serial('runCli reports an unknown variable type with a visible .type diagnostic', async (t) => {
+test.serial('hash variable reports an unavailable mapped algorithm', async (t) => {
+    const ws = await createWorkspace('hash-variables');
+    const hashAlgorithmMap = TsBuild._hashAlgorithmMap;
+    const originalAlgorithm = hashAlgorithmMap['hash-sha2-224'];
+    hashAlgorithmMap['hash-sha2-224'] = ['unavailable-test-hash'];
+    try {
+        const error = await t.throwsAsync(async () => buildItem(ws, 'tsBuild.json', 'lib'));
+        t.is(error.message, 'Hash algorithm "unavailable-test-hash" is unavailable for variable type "hash-sha2-224"');
+    }
+    finally {
+        hashAlgorithmMap['hash-sha2-224'] = originalAlgorithm;
+    }
+});
+test.serial('runCli rejects an unsupported variable type at build time', async (t) => {
     const ws = await createWorkspace('minimal');
     await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
         {
@@ -884,12 +972,10 @@ test.serial('runCli reports an unknown variable type with a visible .type diagno
         }
     ]));
     const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
-    const outputLines = result.output.split('\n');
     t.is(result.exitCode, 1);
-    t.true(outputLines.some((line) => line.includes('variables[0].type')));
-    t.true(outputLines.some((line) => line.includes('Invalid discriminator value')));
+    t.true(result.output.includes('Unsupported variable type "bogus"'));
 });
-test.serial('runCli rejects a tuple value for a string variable', async (t) => {
+test.serial('runCli rejects a tuple value for a string variable at build time', async (t) => {
     const ws = await createWorkspace('minimal');
     await writeFile(path.join(ws, 'tsBuild.json'), JSON.stringify([
         {
@@ -899,10 +985,8 @@ test.serial('runCli rejects a tuple value for a string variable', async (t) => {
         }
     ]));
     const result = await runCliWithCapturedLog(['-f', path.join(ws, 'tsBuild.json'), 'lib']);
-    const outputLines = result.output.split('\n');
     t.is(result.exitCode, 1);
-    t.true(outputLines.some((line) => line.includes('variables[0].value')));
-    t.true(outputLines.some((line) => line.includes('expected string, received array')));
+    t.true(result.output.includes('Unexpected value for variable type "string"'));
 });
 test.serial('runCli rejects one- and three-element tuples under mtime', async (t) => {
     const ws = await createWorkspace('minimal');
