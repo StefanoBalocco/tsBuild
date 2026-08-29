@@ -120,9 +120,10 @@ export default class TsBuild {
             }));
         }
     }
-    static async minify(absPath, useTerser, useTerserCompanion, terserOptions = defaultTerserOptions) {
+    static async minify(file, absPath, useTerser, useTerserCompanion, terserOptions = defaultTerserOptions) {
         let returnValue = false;
         if (useTerser || useTerserCompanion) {
+            ZeptoLogger.instance.log(LogLevel.INFO, `[MINIFY] File> ${file}`);
             const source = await readFile(absPath, 'utf8');
             const parsedPath = path.parse(absPath);
             const outPath = path.join(parsedPath.dir, `${parsedPath.name}.min${parsedPath.ext}`);
@@ -289,7 +290,7 @@ export default class TsBuild {
             for (const file of minifyPlan.files) {
                 const absFile = path.resolve(targetDirectory, file);
                 ZeptoLogger.instance.log(LogLevel.INFO, `[${targetLabel}] Minifying ${path.relative(this._configDirectory, absFile)}...`);
-                await TsBuild.minify(absFile, minifyPlan.enabled, minifyPlan.useTerserCompanion, minifyPlan.options);
+                await TsBuild.minify(file, absFile, minifyPlan.enabled, minifyPlan.useTerserCompanion, minifyPlan.options);
             }
         }
         if (buildItem.copy) {

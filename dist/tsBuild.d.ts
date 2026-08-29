@@ -46,7 +46,7 @@ export default class TsBuild {
     constructor(configDirectory: string);
     private static readonly _hashAlgorithmMap;
     static compile(configPath: string): void;
-    static minify(absPath: string, useTerser: boolean, useTerserCompanion: boolean, terserOptions?: TerserOptions): Promise<boolean>;
+    static minify(file: string, absPath: string, useTerser: boolean, useTerserCompanion: boolean, terserOptions?: TerserOptions): Promise<boolean>;
     private static _formatIssueLines;
     private static _formatTupleToken;
     static copy(absDestination: string, absFiles: string[], clean: boolean): Promise<void>;

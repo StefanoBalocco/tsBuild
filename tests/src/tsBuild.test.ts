@@ -195,7 +195,7 @@ test.serial( 'minify on .mjs writes sibling .min.mjs and leaves original unchang
 	await mkdir( path.dirname( sourcePath ), { recursive: true } );
 	await writeFile( sourcePath, 'export const version = "1.0.0";\n' );
 
-	const result: boolean = await TsBuild.minify( sourcePath, true, false );
+	const result: boolean = await TsBuild.minify( 'dist/lib.mjs', sourcePath, true, false );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -212,7 +212,7 @@ test.serial( 'minify defaults partial terser options to module mode', async ( t:
 	await mkdir( path.dirname( sourcePath ), { recursive: true } );
 	await writeFile( sourcePath, 'const unused = "unused";\nexport const version = "1.0.0";\n' );
 
-	const result: boolean = await TsBuild.minify( sourcePath, true, false, {} );
+	const result: boolean = await TsBuild.minify( 'dist/lib.mjs', sourcePath, true, false, {} );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -228,7 +228,7 @@ test.serial( 'minify on .cjs writes sibling .min.cjs and leaves original unchang
 	await mkdir( path.dirname( sourcePath ), { recursive: true } );
 	await writeFile( sourcePath, 'module.exports = { x: 1 };\n' );
 
-	const result: boolean = await TsBuild.minify( sourcePath, true, false );
+	const result: boolean = await TsBuild.minify( 'dist/lib.cjs', sourcePath, true, false );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -245,7 +245,7 @@ test.serial( 'minify on extensionless file writes sibling .min and leaves origin
 	await mkdir( path.dirname( sourcePath ), { recursive: true } );
 	await writeFile( sourcePath, 'export const version = "1.0.0";\n' );
 
-	const result: boolean = await TsBuild.minify( sourcePath, true, false );
+	const result: boolean = await TsBuild.minify( 'dist/bundle', sourcePath, true, false );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -263,7 +263,7 @@ test.serial( 'minify on comments-only .js writes an empty .min sibling', async (
 	await writeFile( sourcePath, '// just a comment\n/* another one */\n' );
 	await writeFile( minPath, 'stale content\n' );
 
-	const result: boolean = await TsBuild.minify( sourcePath, true, false );
+	const result: boolean = await TsBuild.minify( 'dist/empty.js', sourcePath, true, false );
 
 	t.true( result );
 	t.true( await exists( sourcePath ) );
@@ -282,7 +282,7 @@ test.serial( 'minify with both transforms on comments-only source writes an empt
 	await writeFile( minPath, 'stale content\n' );
 
 	// Both transforms active: Terser produces an empty string, which is selected over the comments-only source; the .min sibling is empty
-	const result: boolean = await TsBuild.minify( sourcePath, true, true );
+	const result: boolean = await TsBuild.minify( 'dist/empty.js', sourcePath, true, true );
 
 	t.true( result );
 	t.is( await readFile( sourcePath, 'utf8' ), '// just a comment\n/* another one */\n' );
@@ -310,7 +310,7 @@ test.serial( 'minify writes the .min sibling with the source content when Terser
 	t.true( 0 < terserOutput.length );
 	t.true( Buffer.byteLength( source, 'utf8' ) < Buffer.byteLength( terserOutput, 'utf8' ) );
 
-	const result: boolean = await TsBuild.minify( sourcePath, true, false );
+	const result: boolean = await TsBuild.minify( 'dist/larger.js', sourcePath, true, false );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -340,7 +340,7 @@ test.serial( 'minify selects Terser output by UTF-8 byte length even when it has
 	t.is( terserCompanion( terserOutput ), terserOutput );
 	t.is( terserCompanion( source ), source );
 
-	const result: boolean = await TsBuild.minify( sourcePath, true, true );
+	const result: boolean = await TsBuild.minify( 'dist/multibyte.js', sourcePath, true, true );
 	t.true( result );
 	t.true( await exists( minPath ) );
 	t.is( await readFile( minPath, 'utf8' ), terserOutput );
@@ -471,7 +471,7 @@ test.serial( 'minify rethrows EISDIR from writing the .min output when the outpu
 
 	// The .min path is a directory; writeFile throws EISDIR (not unlink)
 	const error: NodeJS.ErrnoException = await t.throwsAsync(
-		async (): Promise<boolean> => TsBuild.minify( sourcePath, true, false )
+		async (): Promise<boolean> => TsBuild.minify( 'dist/dirpath.js', sourcePath, true, false )
 	);
 	t.is( error.code, 'EISDIR' );
 } );
@@ -485,7 +485,7 @@ test.serial( 'minify on absent .min file writes the .min sibling', async ( t: Ex
 	await writeFile( sourcePath, '// just a comment\n/* another one */\n' );
 	// deliberately no min file — it is created by minify
 
-	const result: boolean = await TsBuild.minify( sourcePath, true, false );
+	const result: boolean = await TsBuild.minify( 'dist/absent.js', sourcePath, true, false );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -499,7 +499,7 @@ test.serial( 'minify on empty .js writes an empty .min sibling and returns true'
 	await mkdir( path.dirname( sourcePath ), { recursive: true } );
 	await writeFile( sourcePath, '' );
 
-	const result: boolean = await TsBuild.minify( sourcePath, true, true );
+	const result: boolean = await TsBuild.minify( 'dist/blank.js', sourcePath, true, true );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -514,7 +514,7 @@ test.serial( 'minify with Terser only on empty .js writes an empty .min sibling 
 	await mkdir( path.dirname( sourcePath ), { recursive: true } );
 	await writeFile( sourcePath, '' );
 
-	const result: boolean = await TsBuild.minify( sourcePath, true, false );
+	const result: boolean = await TsBuild.minify( 'dist/blank-terser.js', sourcePath, true, false );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -529,7 +529,7 @@ test.serial( 'minify with TerserCompanion only on empty .js writes an empty .min
 	await mkdir( path.dirname( sourcePath ), { recursive: true } );
 	await writeFile( sourcePath, '' );
 
-	const result: boolean = await TsBuild.minify( sourcePath, false, true );
+	const result: boolean = await TsBuild.minify( 'dist/blank-companion.js', sourcePath, false, true );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -567,7 +567,7 @@ test.serial( 'minify picks companion when its output is strictly smaller', async
 
 	t.true( companionSize < terserSize, `expected companion ${ companionSize } < terser ${ terserSize }` );
 
-	const result: boolean = await TsBuild.minify( sourcePath, true, true );
+	const result: boolean = await TsBuild.minify( 'dist/companion-wins.js', sourcePath, true, true );
 
 	t.true( result );
 	t.true( await exists( minPath ) );
@@ -979,13 +979,13 @@ test.serial( 'minify toplevel true drops unused top-level declarations retained 
 	await mkdir( path.dirname( sourcePath ), { recursive: true } );
 	await writeFile( sourcePath, source );
 
-	const retainedResult: boolean = await TsBuild.minify( sourcePath, true, false, { module: false, toplevel: false } );
+	const retainedResult: boolean = await TsBuild.minify( 'dist/toplevel.js', sourcePath, true, false, { module: false, toplevel: false } );
 
 	t.true( retainedResult );
 	const retained: string = await readFile( minPath, 'utf8' );
 	t.true( retained.includes( 'unusedHelper' ) );
 
-	const droppedResult: boolean = await TsBuild.minify( sourcePath, true, false, { module: false, toplevel: true } );
+	const droppedResult: boolean = await TsBuild.minify( 'dist/toplevel.min.js', sourcePath, true, false, { module: false, toplevel: true } );
 
 	t.true( droppedResult );
 	const dropped: string = await readFile( minPath, 'utf8' );
